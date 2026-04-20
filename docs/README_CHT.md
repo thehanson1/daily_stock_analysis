@@ -48,16 +48,17 @@
 | **Agent 問股** | **策略對話** | **多輪策略問答，支援 11 種內建策略（Web/Bot/API）** |
 | 推送 | 多渠道通知 | Telegram、Discord、Slack、郵件、企業微信、飛書等 |
 | 自動化 | 定時運行 | GitHub Actions 定時執行，無需伺服器 |
+| 一致性 | 跨環境同步 | 支援 `DATABASE_URL` (Postgres/MySQL) 實現本地與 GitHub Actions 之間的數據同步與持久化 |
 
 ### 技術棧與數據來源
 
 | 類型 | 支援 |
 |------|------|
 | AI 模型 | Gemini（免費）、OpenAI 兼容、DeepSeek、通義千問、Claude、Ollama |
-| 行情數據 | AkShare、Tushare、Pytdx、Baostock、YFinance、[Longbridge](https://open.longbridge.com/)（美股/港股首選數據源） |
+| 行情數據 | AkShare、Tushare、Pytdx、Baostock、[Twelve Data](https://twelvedata.com/)、[Longbridge](https://open.longbridge.com/)、YFinance（美股/港股個股採 API 優先鏈，YFinance 固定最後兜底） |
 | 新聞搜索 | Tavily、SerpAPI、Bocha、Brave、MiniMax |
 
-> **長橋優先策略（僅美／港股）**：在已設定 `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` / `LONGBRIDGE_ACCESS_TOKEN` 的前提下，美股與港股的 **日線** 與 **即時行情** 由 **Longbridge 優先**；長橋失敗或欄位不足時再由 **YFinance／AkShare** 兜底或合併補欄。**未設定長橋憑證時不會呼叫 Longbridge**，美／港股仍以 YFinance／AkShare 為主（與未整合長橋前一致）。**美股大盤指數**始終以 YFinance 優先（長橋不提供指數行情）。**A 股**路由不變。詳見 `.env.example` 與 [完整指南](./full-guide.md)。
+> **美股／港股 API 優先策略**：系統會先收集所有**已設定且可用**的 API 型數據源，依 `priority` 由小到大嘗試；`YfinanceFetcher` 永遠固定在最後兜底。僅設定 Twelve Data 時：`TwelveDataFetcher -> YfinanceFetcher`；僅設定 Longbridge 時：`LongbridgeFetcher -> YfinanceFetcher`；同時設定 Twelve Data 與 Longbridge 時，預設依 `TWELVEDATA_PRIORITY=2` 與 `LONGBRIDGE_PRIORITY=5` 形成 `TwelveDataFetcher -> LongbridgeFetcher -> YfinanceFetcher`。若未設定任何 API 型數據源，則美／港股個股維持原有行為，僅使用 `YfinanceFetcher`。**美股大盤指數**（例如 `SPX`）仍以 **YFinance** 優先；**A 股**路由不變。詳見 `.env.example` 與 [完整指南](./full-guide.md)。
 
 ### 內建交易紀律
 
@@ -141,9 +142,14 @@
 | `SEARXNG_BASE_URLS` | SearXNG 自建實例（無配額兜底，需在 settings.yml 啟用 format: json）；留空時預設自動發現公共實例 | 可選 |
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | 是否在 `SEARXNG_BASE_URLS` 為空時自動從 `searx.space` 取得公共實例（預設 `true`） | 可選 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可選 |
-| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key（設定後自動成為美股/港股首選數據源） | 可選 |
+| `TWELVEDATA_API_KEY` | [Twelve Data](https://twelvedata.com/) API Key（設定後加入美股／港股 API 優先鏈） | 可選 |
+| `TWELVEDATA_PRIORITY` | Twelve Data 在美股／港股 API 優先鏈中的優先級，預設 `2`（數值越小越先嘗試） | 可選 |
+| `TWELVEDATA_TIMEOUT_SECONDS` | Twelve Data 請求超時秒數，預設 `10` | 可選 |
+| `TWELVEDATA_US_HK_ENABLE` | 是否將 Twelve Data 納入美股／港股 API 優先鏈，預設 `true` | 可選 |
+| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key（憑證完整時加入美股／港股 API 優先鏈） | 可選 |
 | `LONGBRIDGE_APP_SECRET` | Longbridge App Secret | 可選 |
 | `LONGBRIDGE_ACCESS_TOKEN` | Longbridge Access Token | 可選 |
+| `LONGBRIDGE_PRIORITY` | Longbridge 在美股／港股 API 優先鏈中的優先級，預設 `5` | 可選 |
 | `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` | 長橋 `static_info` 進程內快取秒數，預設 `86400`；`0` 表示不快取 | 可選 |
 | `LONGBRIDGE_HTTP_URL` | HTTP 介面位址（預設 `https://openapi.longbridge.com`） | 可選 |
 | `LONGBRIDGE_QUOTE_WS_URL` | 行情 WebSocket 位址（預設 `wss://openapi-quote.longbridge.com/v2`） | 可選 |

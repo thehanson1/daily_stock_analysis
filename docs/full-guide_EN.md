@@ -230,6 +230,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `SCHEDULE_ENABLED` | Enable scheduled tasks | `false` |
 | `SCHEDULE_TIME` | Scheduled execution time | `18:00` |
 | `LOG_DIR` | Log directory | `./logs` |
+| `DATABASE_URL` | External database connection URL (PostgreSQL/MySQL). Used with priority to sync data between GitHub Actions and local. Falls back to SQLite if unset. | - |
 
 ---
 
@@ -506,8 +507,31 @@ System defaults to AkShare (free), also supports other data sources:
 
 ### YFinance
 - Free, no configuration needed
-- Supports US/HK stock data
-- US stock historical and real-time data both use YFinance exclusively to avoid technical indicator errors from akshare's US stock adjustment issues
+- Supports global market data and remains the final fallback for US/HK equities
+- US market indices (for example `SPX`, `DJI`, `IXIC`) still prefer YFinance first
+
+### US/HK API Priority Strategy
+- The system first collects all **configured and available** API-based data sources, then tries them in ascending `priority`; `YfinanceFetcher` is always appended as the final fallback
+- API-based sources currently supported in this chain: `TwelveDataFetcher`, `LongbridgeFetcher`
+- Only Twelve Data configured: `TwelveDataFetcher -> YfinanceFetcher`
+- Only Longbridge configured: `LongbridgeFetcher -> YfinanceFetcher`
+- Both Twelve Data and Longbridge configured: order them by `TWELVEDATA_PRIORITY` / `LONGBRIDGE_PRIORITY`, then fall back to `YfinanceFetcher`
+- If no API-based provider is configured, US/HK equities keep the original behavior and use only `YfinanceFetcher`
+- A-share routing is unchanged
+
+### Twelve Data
+- No brokerage account required; only `TWELVEDATA_API_KEY` is needed
+- Historical daily bars use the Twelve Data `time_series` endpoint; latest price uses the `price` endpoint
+- Relevant configuration:
+- `TWELVEDATA_API_KEY`
+- `TWELVEDATA_PRIORITY` (default `2`)
+- `TWELVEDATA_TIMEOUT_SECONDS` (default `10`)
+- `TWELVEDATA_US_HK_ENABLE` (default `true`)
+
+### Longbridge
+- Requires a complete `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
+- Participates in the same US/HK API priority chain after credentials are complete
+- `LONGBRIDGE_PRIORITY` controls its position among API providers; default is `5`
 
 ---
 

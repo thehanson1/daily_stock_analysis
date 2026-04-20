@@ -407,6 +407,7 @@ git push -u origin main
 | `SERPAPI_API_KEYS` | SerpAPI Key | 可选 |
 | `SEARXNG_BASE_URLS` | SearXNG 自建实例（无配额兜底，需在 settings.yml 启用 format: json） | 可选 |
 | `TUSHARE_TOKEN` | Tushare Token | 可选 |
+| `DATABASE_URL` | 云端数据库连接 (Postgres/MySQL)，用于跨环境同步数据 | 可选 |
 | `GEMINI_MODEL` | 模型名称（默认 gemini-2.0-flash） | 可选 |
 
 > *注：通知渠道至少配置一个，支持多渠道同时推送

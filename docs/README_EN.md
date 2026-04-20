@@ -49,6 +49,7 @@ English | [简体中文](../README.md) | [繁體中文](README_CHT.md)
 | Agent Q&A | Strategy Chat | Multi-turn strategy chat with 11 built-in trading strategies (internally loaded as skills) (Web/Bot/API) |
 | Notifications | Multi-channel Push | Telegram, Discord, Slack, Email, WeChat Work, Feishu, etc. |
 | Automation | Scheduled Runs | GitHub Actions scheduled execution, no server required |
+| Consistency | Cross-env Sync | Supports `DATABASE_URL` (Postgres/MySQL) for syncing data between local and GitHub Actions |
 
 > The Backtest page now includes a 1-day next-session validation view. You can filter by stock code and analysis date range to compare the original AI prediction with the next trading day close and inspect the filtered accuracy rate. This is based on historical analysis plus `eval_window_days=1` backtest data, not real trade execution logs.
 
@@ -57,10 +58,10 @@ English | [简体中文](../README.md) | [繁體中文](README_CHT.md)
 | Type | Supported |
 |------|----------|
 | LLMs | Gemini (free), OpenAI-compatible, DeepSeek, Qwen, Claude, Ollama |
-| Market Data | AkShare, Tushare, Pytdx, Baostock, YFinance, [Longbridge](https://open.longbridge.com/) (primary for US/HK when configured) |
+| Market Data | AkShare, Tushare, Pytdx, Baostock, [Twelve Data](https://twelvedata.com/), [Longbridge](https://open.longbridge.com/), YFinance (API-first chain for US/HK equities, YFinance fixed as final fallback) |
 | News Search | Tavily, SerpAPI, Bocha, Brave, MiniMax |
 
-> **Longbridge-first (US/HK only):** With `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` / `LONGBRIDGE_ACCESS_TOKEN` set, **daily bars and realtime quotes** for US & HK stocks are fetched from **Longbridge first**; **YFinance / AkShare** are used for **fallback** or **field merge** when Longbridge fails or returns incomplete fields. **If Longbridge is not configured, it is not called** — US/HK still use YFinance / AkShare as before. **US market indices** (e.g. SPX) always prefer **YFinance** (indices are not supported on Longbridge). **A-share** routing is unchanged. See `.env.example` and the [full guide](./full-guide_EN.md).
+> **US/HK API priority strategy:** The system first collects all **configured and available** API-based market-data providers, then tries them in ascending `priority`; `YfinanceFetcher` is always fixed as the final fallback. With only Twelve Data configured: `TwelveDataFetcher -> YfinanceFetcher`; with only Longbridge configured: `LongbridgeFetcher -> YfinanceFetcher`; with both configured, the default order is `TwelveDataFetcher -> LongbridgeFetcher -> YfinanceFetcher` via `TWELVEDATA_PRIORITY=2` and `LONGBRIDGE_PRIORITY=5`. If no API provider is configured, US/HK equities keep the original behavior and use only `YfinanceFetcher`. **US market indices** (for example `SPX`) still prefer **YFinance** first. **A-share** routing is unchanged. See `.env.example` and the [full guide](./full-guide_EN.md).
 
 ### Built-in Trading Rules
 
@@ -146,9 +147,14 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | Auto-discover public SearXNG instances from `searx.space` when `SEARXNG_BASE_URLS` is empty (default `true`) | Optional |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | Optional |
 | `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API key (CN market review index enhancement; breadth also uses TickFlow when the plan supports universe queries) | Optional |
-| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key (becomes primary US/HK data source when configured) | Optional |
+| `TWELVEDATA_API_KEY` | [Twelve Data](https://twelvedata.com/) API key (joins the US/HK API priority chain when configured) | Optional |
+| `TWELVEDATA_PRIORITY` | Twelve Data priority inside the US/HK API chain, default `2` (smaller value = tried earlier) | Optional |
+| `TWELVEDATA_TIMEOUT_SECONDS` | Twelve Data request timeout in seconds, default `10` | Optional |
+| `TWELVEDATA_US_HK_ENABLE` | Whether Twelve Data participates in the US/HK API priority chain, default `true` | Optional |
+| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key (joins the US/HK API priority chain when credentials are complete) | Optional |
 | `LONGBRIDGE_APP_SECRET` | Longbridge App Secret | Optional |
 | `LONGBRIDGE_ACCESS_TOKEN` | Longbridge Access Token | Optional |
+| `LONGBRIDGE_PRIORITY` | Longbridge priority inside the US/HK API chain, default `5` | Optional |
 | `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` | In-process `static_info` cache TTL in seconds (default `86400`; `0` = no cache) | Optional |
 | `LONGBRIDGE_HTTP_URL` | HTTP API base URL (default `https://openapi.longbridge.com`) | Optional |
 | `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket URL (default `wss://openapi-quote.longbridge.com/v2`) | Optional |

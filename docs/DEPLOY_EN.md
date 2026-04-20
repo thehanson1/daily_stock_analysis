@@ -364,6 +364,7 @@ Add these Secrets:
 | `MINIMAX_API_KEYS` | MiniMax Coding Plan Web Search | Optional |
 | `SERPAPI_API_KEYS` | SerpAPI Key | Optional |
 | `TUSHARE_TOKEN` | Tushare Token | Optional |
+| `DATABASE_URL` | Cloud database connection string (Postgres/MySQL) for cross-env sync | Optional |
 | `GEMINI_MODEL` | Model name (default gemini-2.0-flash) | Optional |
 
 > *Note: Configure at least one notification channel, multiple channels supported for simultaneous push

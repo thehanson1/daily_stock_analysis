@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] 支持通过 `DATABASE_URL` 环境变量直连外部云端数据库（如 Supabase PostgreSQL），解决本地与 GitHub Actions 之间的数据同步与持久化问题；未配置时自动回退至本地 SQLite。
 - [修复] LLM 分析成功日志改为记录实际生效模型；当主模型失败并切换到 fallback 模型时，日志与用量统计不再误报为主模型成功。
 - [修复] 大盘复盘链路改为使用独立的 Markdown 系统提示，不再继承个股“决策仪表盘 JSON”系统提示，避免市场复盘输出与格式要求冲突。
 - [修复] 个股分析 Prompt 中今日行情、MA5/MA10/MA20 与历史 K 线价格统一保留 2 位小数，减少原始浮点噪声对报告与模型输出的干扰。
@@ -56,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 统一传统链与 Agent 链的 provider bucket 解析逻辑，并将 batch 提交延迟优化为 `max(ANALYSIS_DELAY - LLM_MIN_INTERVAL, 0)`，减少双重等待导致的吞吐下降。
 - [新功能] 新增 `TwelveDataFetcher` 作为免开户的美股/港股 API 数据源，支持 Twelve Data `time_series` 历史日线、`price` 最新价格与 `symbol_search` symbol/name 归一。
 - [改进] 美股/港股个股数据源改为配置驱动的 API 优先链：先尝试已配置且可用的 Twelve Data / Longbridge，再由 `YfinanceFetcher` 固定兜底；美股指数继续保持 YFinance 优先，A 股路由不变。
-- [文档] `.env.example`、`README.md`、`docs/full-guide.md` 同步补充 Twelve Data 配置项与美股/港股 API 优先链说明。
+- [文档] `.env.example`、`README.md`、`docs/full-guide.md`、`docs/full-guide_EN.md`、`docs/README_EN.md`、`docs/README_CHT.md` 同步补充 Twelve Data 配置项与美股/港股 API 优先链说明。
 - [测试] 补充 Twelve Data fetcher、US/HK API priority routing 与美股指数保序回归测试。
 
 ## [3.11.0] - 2026-03-27
