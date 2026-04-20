@@ -1487,15 +1487,22 @@ class DataFetcherManager:
         fetchers = list(self._fetchers)
         market = _market_tag(stock_code)
         if market == "us":
+            preferred_order = {
+                "TwelveDataFetcher": 0,
+                "LongbridgeFetcher": 1,
+                "YfinanceFetcher": 2,
+            }
             fetchers = [
                 fetcher for fetcher in fetchers
-                if fetcher.name in {"YfinanceFetcher", "LongbridgeFetcher"}
+                if fetcher.name in preferred_order
             ]
+            fetchers.sort(key=lambda fetcher: preferred_order.get(fetcher.name, 99))
         elif market == "hk":
             preferred_order = {
-                "YfinanceFetcher": 0,
+                "TwelveDataFetcher": 0,
                 "LongbridgeFetcher": 1,
-                "AkshareFetcher": 2,
+                "YfinanceFetcher": 2,
+                "AkshareFetcher": 3,
             }
             fetchers = [
                 fetcher for fetcher in fetchers
