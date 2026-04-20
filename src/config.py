@@ -630,6 +630,12 @@ class Config:
     # 是否保存分析上下文快照（用于历史回溯）
     save_context_snapshot: bool = True
 
+    # === Twelve Data 数据源配置 ===
+    twelvedata_api_key: Optional[str] = None
+    twelvedata_priority: int = 2
+    twelvedata_timeout_seconds: int = 10
+    twelvedata_us_hk_enable: bool = True
+
     # === Longbridge 数据源配置 ===
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
@@ -1220,6 +1226,10 @@ class Config:
             sqlite_write_retry_max=parse_env_int(os.getenv('SQLITE_WRITE_RETRY_MAX'), 3, field_name='SQLITE_WRITE_RETRY_MAX', minimum=0),
             sqlite_write_retry_base_delay=parse_env_float(os.getenv('SQLITE_WRITE_RETRY_BASE_DELAY'), 0.2, field_name='SQLITE_WRITE_RETRY_BASE_DELAY', minimum=0.0),
             save_context_snapshot=os.getenv('SAVE_CONTEXT_SNAPSHOT', 'true').lower() == 'true',
+            twelvedata_api_key=os.getenv('TWELVEDATA_API_KEY') or None,
+            twelvedata_priority=parse_env_int(os.getenv('TWELVEDATA_PRIORITY'), 2, field_name='TWELVEDATA_PRIORITY', minimum=0),
+            twelvedata_timeout_seconds=parse_env_int(os.getenv('TWELVEDATA_TIMEOUT_SECONDS'), 10, field_name='TWELVEDATA_TIMEOUT_SECONDS', minimum=1),
+            twelvedata_us_hk_enable=parse_env_bool(os.getenv('TWELVEDATA_US_HK_ENABLE'), True),
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
             longbridge_app_secret=os.getenv('LONGBRIDGE_APP_SECRET') or None,
             longbridge_access_token=os.getenv('LONGBRIDGE_ACCESS_TOKEN') or None,

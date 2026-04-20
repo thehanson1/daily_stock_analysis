@@ -69,11 +69,11 @@
 | 类型 | 支持 |
 |------|------|
 | AI 模型 | [AIHubMix](https://aihubmix.com/?aff=CfMq)、Gemini、OpenAI 兼容、DeepSeek、通义千问、Claude、Ollama 本地模型 等（统一通过 [LiteLLM](https://github.com/BerriAI/litellm) 调用，支持多 Key 负载均衡）|
-| 行情数据 | AkShare、Tushare、Pytdx、Baostock、YFinance、[Longbridge](https://open.longbridge.com/)（美股/港股首选数据源） |
+| 行情数据 | AkShare、Tushare、Pytdx、Baostock、[Twelve Data](https://twelvedata.com/)、[Longbridge](https://open.longbridge.com/)、YFinance（美股/港股 API 优先链，YFinance 固定兜底） |
 | 新闻搜索 | Tavily、SerpAPI、Bocha、Brave、MiniMax |
 | 社交舆情 | [Stock Sentiment API](https://api.adanos.org/docs)（Reddit / X / Polymarket，仅美股，可选） |
 
-> **长桥优先策略（仅美/港股）**：在配置 `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` / `LONGBRIDGE_ACCESS_TOKEN` 的前提下，美股与港股的 **日线 K 线** 与 **实时行情** 由 **Longbridge 优先拉取**；若长桥失败或部分字段缺失，再由 **YFinance（美股）/ AkShare（港股）** 兜底或合并补全字段。**未配置长桥凭据时不会调用 Longbridge**，美股/港股仍以 YFinance / AkShare 为主数据源（与未集成长桥前的行为一致）。**美股大盘指数**（如 SPX）始终以 YFinance 优先（长桥不提供指数行情）。**A 股**路由不变，仍为 Efinance → AkShare → Tushare → Pytdx → Baostock。详见 `.env.example` 与 [完整指南](docs/full-guide.md) 中长桥说明。
+> **美股/港股 API 优先策略**：系统会先收集所有**已配置且可用**的 API 型数据源，并按 `priority` 从小到大尝试；`YfinanceFetcher` 永远固定在最后兜底。仅配置 Twelve Data 时：`TwelveDataFetcher -> YfinanceFetcher`；仅配置 Longbridge 时：`LongbridgeFetcher -> YfinanceFetcher`；同时配置 Twelve Data 和 Longbridge 时：默认按 `TWELVEDATA_PRIORITY=2`、`LONGBRIDGE_PRIORITY=5` 形成 `TwelveDataFetcher -> LongbridgeFetcher -> YfinanceFetcher`。若未配置任何 API 型数据源，则保持原有行为，仅使用 `YfinanceFetcher`。**美股大盘指数**（如 SPX）继续保持 YFinance 优先；**A 股**路由不变，仍为 Efinance → AkShare → Tushare → Pytdx → Baostock。详见 `.env.example` 与 [完整指南](docs/full-guide.md)。
 
 ### 内置交易纪律
 
@@ -189,9 +189,14 @@
 | `SOCIAL_SENTIMENT_API_URL` | 自定义社交舆情 API 地址（默认 `https://api.adanos.org`） | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 | `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key（增强 A 股大盘复盘指数；若套餐支持标的池查询，也可增强市场统计） | 可选 |
-| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key（配置后自动成为美股/港股首选数据源） | 可选 |
+| `TWELVEDATA_API_KEY` | [Twelve Data](https://twelvedata.com/) API Key（配置后加入美股/港股 API 优先链） | 可选 |
+| `TWELVEDATA_PRIORITY` | Twelve Data 在美股/港股 API 优先链中的优先级，默认 `2`（数值越小越先尝试） | 可选 |
+| `TWELVEDATA_TIMEOUT_SECONDS` | Twelve Data 请求超时秒数，默认 `10` | 可选 |
+| `TWELVEDATA_US_HK_ENABLE` | 是否将 Twelve Data 纳入美股/港股 API 优先链，默认 `true` | 可选 |
+| `LONGBRIDGE_APP_KEY` | [Longbridge OpenAPI](https://open.longbridge.com/) App Key（完整凭据配置后加入美股/港股 API 优先链） | 可选 |
 | `LONGBRIDGE_APP_SECRET` | Longbridge App Secret | 可选 |
 | `LONGBRIDGE_ACCESS_TOKEN` | Longbridge Access Token | 可选 |
+| `LONGBRIDGE_PRIORITY` | Longbridge 在美股/港股 API 优先链中的优先级，默认 `5` | 可选 |
 | `LONGBRIDGE_STATIC_INFO_TTL_SECONDS` | 长桥 `static_info` 进程内缓存秒数，默认 `86400`；`0` 表示不缓存 | 可选 |
 | `LONGBRIDGE_HTTP_URL` | HTTP 接口地址（默认 `https://openapi.longbridge.com`） | 可选 |
 | `LONGBRIDGE_QUOTE_WS_URL` | 行情 WebSocket 地址（默认 `wss://openapi-quote.longbridge.com/v2`） | 可选 |

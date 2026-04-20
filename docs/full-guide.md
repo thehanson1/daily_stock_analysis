@@ -654,7 +654,31 @@ PUSHOVER_API_TOKEN=your_api_token
 ### YFinance
 - 免费，无需配置
 - 支持美股/港股数据
-- 美股历史数据与实时行情均统一使用 YFinance，以避免 akshare 美股复权异常导致的技术指标错误
+- 在美股/港股普通个股链路中永远作为最后兜底
+- 美股指数（如 `SPX`、`DJI`、`IXIC`）继续保持 YFinance 优先
+
+### 美股/港股 API 优先策略
+- 系统会先收集所有**已配置且可用**的 API 型数据源，并按 `priority` 从小到大尝试；`YfinanceFetcher` 永远固定最后兜底
+- 当前支持纳入该链路的 API 型数据源：`TwelveDataFetcher`、`LongbridgeFetcher`
+- 仅配置 Twelve Data 时：`TwelveDataFetcher -> YfinanceFetcher`
+- 仅配置 Longbridge 时：`LongbridgeFetcher -> YfinanceFetcher`
+- 同时配置 Twelve Data 与 Longbridge 时：按 `TWELVEDATA_PRIORITY` / `LONGBRIDGE_PRIORITY` 排序后，再由 `YfinanceFetcher` 兜底
+- 若未配置任何 API 型数据源，则保持原有行为，仅使用 `YfinanceFetcher`
+- A 股路由保持不变；本次改造不影响 `EfinanceFetcher`、`AkshareFetcher`、`TushareFetcher`、`PytdxFetcher`、`BaostockFetcher`
+
+### Twelve Data
+- 无需开户，只需配置 `TWELVEDATA_API_KEY`
+- 历史日线使用 Twelve Data `time_series` 接口；最新价格使用 `price` 接口
+- 港股代码在必要时会通过 `symbol_search` 做 symbol 归一；常用配置项：
+  - `TWELVEDATA_API_KEY`
+  - `TWELVEDATA_PRIORITY`（默认 `2`）
+  - `TWELVEDATA_TIMEOUT_SECONDS`（默认 `10`）
+  - `TWELVEDATA_US_HK_ENABLE`（默认 `true`）
+
+### Longbridge
+- 需要完整配置 `LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`
+- 凭据完整后自动加入同一条美股/港股 API 优先链
+- `LONGBRIDGE_PRIORITY` 用于控制它在 API 型数据源中的顺序；默认 `5`
 
 ### 东财接口频繁失败时的处理
 

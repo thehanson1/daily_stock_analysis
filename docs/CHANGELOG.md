@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] LLM 请求节奏控制补齐统一限流层：新增 `LLM_MIN_INTERVAL` 配置与线程安全的全局 LLM rate limiter，并接入传统分析链与 Agent 链的真实 LiteLLM 请求出口。
 - [修复] `StockAnalysisPipeline.run()` 中的 `ANALYSIS_DELAY` 改为作用于任务提交阶段，批量分析不再一次性将所有股票任务瞬时提交到线程池。
 - [改进] 统一传统链与 Agent 链的 provider bucket 解析逻辑，并将 batch 提交延迟优化为 `max(ANALYSIS_DELAY - LLM_MIN_INTERVAL, 0)`，减少双重等待导致的吞吐下降。
+- [新功能] 新增 `TwelveDataFetcher` 作为免开户的美股/港股 API 数据源，支持 Twelve Data `time_series` 历史日线、`price` 最新价格与 `symbol_search` symbol/name 归一。
+- [改进] 美股/港股个股数据源改为配置驱动的 API 优先链：先尝试已配置且可用的 Twelve Data / Longbridge，再由 `YfinanceFetcher` 固定兜底；美股指数继续保持 YFinance 优先，A 股路由不变。
+- [文档] `.env.example`、`README.md`、`docs/full-guide.md` 同步补充 Twelve Data 配置项与美股/港股 API 优先链说明。
+- [测试] 补充 Twelve Data fetcher、US/HK API priority routing 与美股指数保序回归测试。
 
 ## [3.11.0] - 2026-03-27
 ## [3.12.0] - 2026-04-01

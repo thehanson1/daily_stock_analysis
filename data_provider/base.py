@@ -741,6 +741,7 @@ class DataFetcherManager:
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
+        from .twelvedata_fetcher import TwelveDataFetcher
         from .longbridge_fetcher import LongbridgeFetcher
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
@@ -749,6 +750,7 @@ class DataFetcherManager:
         pytdx = PytdxFetcher()      # 通达信数据源（可配 PYTDX_HOST/PYTDX_PORT）
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
+        twelvedata = TwelveDataFetcher()
         longbridge = LongbridgeFetcher()
 
         # 初始化数据源列表
@@ -758,6 +760,7 @@ class DataFetcherManager:
             tushare,
             pytdx,
             baostock,
+            twelvedata,
             yfinance,
             longbridge,
         ]
@@ -788,6 +791,70 @@ class DataFetcherManager:
         """添加数据源并重新排序"""
         self._fetchers.append(fetcher)
         self._fetchers.sort(key=lambda f: f.priority)
+
+    @staticmethod
+    def _sort_fetchers_by_priority(fetchers: List[BaseFetcher]) -> List[BaseFetcher]:
+        return sorted(fetchers, key=lambda fetcher: getattr(fetcher, "priority", 99))
+
+    @staticmethod
+    def _dedupe_fetchers(fetchers: List[BaseFetcher]) -> List[BaseFetcher]:
+        deduped: List[BaseFetcher] = []
+        seen_ids = set()
+        for fetcher in fetchers:
+            if id(fetcher) in seen_ids:
+                continue
+            seen_ids.add(id(fetcher))
+            deduped.append(fetcher)
+        return deduped
+
+    def _named_fetchers(self, *names: str) -> List[BaseFetcher]:
+        order = {name: index for index, name in enumerate(names)}
+        selected = [fetcher for fetcher in self._fetchers if fetcher.name in order]
+        selected.sort(key=lambda fetcher: (order.get(fetcher.name, 99), getattr(fetcher, "priority", 99)))
+        return selected
+
+    def _is_us_hk_api_fetcher_ready(self, fetcher: BaseFetcher) -> bool:
+        if fetcher.name not in {"TwelveDataFetcher", "LongbridgeFetcher"}:
+            return False
+        readiness = getattr(fetcher, "is_api_ready", None)
+        if callable(readiness):
+            try:
+                return bool(readiness())
+            except Exception as exc:
+                logger.debug("[数据源链路] %s 可用性检测失败: %s", fetcher.name, exc)
+                return False
+        return False
+
+    def _get_us_hk_api_fetchers(self) -> List[BaseFetcher]:
+        return self._sort_fetchers_by_priority(
+            [
+                fetcher for fetcher in self._fetchers
+                if self._is_us_hk_api_fetcher_ready(fetcher)
+            ]
+        )
+
+    @staticmethod
+    def _describe_fetcher_chain(fetchers: List[BaseFetcher]) -> str:
+        return " -> ".join(
+            f"{fetcher.name}(P{getattr(fetcher, 'priority', 99)})"
+            for fetcher in fetchers
+        )
+
+    def _get_us_index_fetcher_chain(self) -> List[BaseFetcher]:
+        chain: List[BaseFetcher] = []
+        for fetcher in self._named_fetchers("YfinanceFetcher", "LongbridgeFetcher"):
+            if fetcher.name == "LongbridgeFetcher" and not self._is_us_hk_api_fetcher_ready(fetcher):
+                continue
+            chain.append(fetcher)
+        return chain
+
+    def _get_us_hk_priority_chain(self, stock_code: str) -> List[BaseFetcher]:
+        normalized = normalize_stock_code(stock_code)
+        if _market_tag(normalized) not in {"us", "hk"}:
+            return []
+        api_fetchers = self._get_us_hk_api_fetchers()
+        yfinance_fetchers = self._named_fetchers("YfinanceFetcher")
+        return self._dedupe_fetchers(api_fetchers + yfinance_fetchers)
     
     def get_daily_data(
         self, 
@@ -800,8 +867,8 @@ class DataFetcherManager:
         获取日线数据（自动切换数据源）
         
         故障切换策略：
-        1. 美股指数/美股股票优先直连 YfinanceFetcher，再回退 LongbridgeFetcher
-        2. 港股优先直连 YfinanceFetcher，再回退 LongbridgeFetcher
+        1. 美股指数保持 Yfinance 优先，Longbridge 作为可选后备
+        2. 美股/港股个股优先走已配置的 API 型数据源（TwelveData/Longbridge），Yfinance 永远最后兜底
         3. 其他代码从最高优先级数据源开始尝试
         4. 捕获异常后自动切换到下一个
         5. 记录每个数据源的失败原因
@@ -828,44 +895,69 @@ class DataFetcherManager:
         total_fetchers = len(self._fetchers)
         request_start = time.time()
 
-        # 快速路径：美股/港股优先走专用数据源，避免按 A 股链路误探测。
-        if is_us_index_code(stock_code) or is_us_stock_code(stock_code) or _is_hk_market(stock_code):
-            preferred_fetchers = []
-            if is_us_index_code(stock_code) or is_us_stock_code(stock_code):
-                preferred_fetchers = ["YfinanceFetcher", "LongbridgeFetcher"]
-                fast_path_label = "美股/美股指数"
-            else:
-                preferred_fetchers = ["YfinanceFetcher", "LongbridgeFetcher"]
-                fast_path_label = "港股"
+        market_fetchers: List[BaseFetcher] = []
+        fast_path_label = ""
+        if is_us_index_code(stock_code):
+            market_fetchers = self._get_us_index_fetcher_chain()
+            fast_path_label = "美股指数"
+        elif is_us_stock_code(stock_code):
+            market_fetchers = self._get_us_hk_priority_chain(stock_code)
+            fast_path_label = "美股"
+        elif _is_hk_market(stock_code):
+            market_fetchers = self._get_us_hk_priority_chain(stock_code)
+            fast_path_label = "港股"
 
-            for attempt, fetcher in enumerate(self._fetchers, start=1):
-                if fetcher.name in preferred_fetchers:
-                    try:
+        if fast_path_label and not market_fetchers:
+            error_summary = f"{fast_path_label} {stock_code} 无可用专用数据源"
+            elapsed = time.time() - request_start
+            logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
+            raise DataFetchError(error_summary)
+
+        if market_fetchers:
+            logger.info(
+                "[数据源链路] %s %s 使用链路: %s",
+                fast_path_label,
+                stock_code,
+                self._describe_fetcher_chain(market_fetchers),
+            )
+            total_market_fetchers = len(market_fetchers)
+            for attempt, fetcher in enumerate(market_fetchers, start=1):
+                try:
+                    logger.info(
+                        f"[数据源尝试 {attempt}/{total_market_fetchers}] [{fetcher.name}] "
+                        f"{fast_path_label} {stock_code} 直接路由..."
+                    )
+                    df = fetcher.get_daily_data(
+                        stock_code=stock_code,
+                        start_date=start_date,
+                        end_date=end_date,
+                        days=days,
+                    )
+                    if df is not None and not df.empty:
+                        elapsed = time.time() - request_start
                         logger.info(
-                            f"[数据源尝试 {attempt}/{total_fetchers}] [{fetcher.name}] "
-                            f"{fast_path_label} {stock_code} 直接路由..."
+                            f"[数据源完成] {stock_code} 使用 [{fetcher.name}] 获取成功: "
+                            f"rows={len(df)}, elapsed={elapsed:.2f}s"
                         )
-                        df = fetcher.get_daily_data(
-                            stock_code=stock_code,
-                            start_date=start_date,
-                            end_date=end_date,
-                            days=days,
+                        return df, fetcher.name
+                except Exception as e:
+                    error_type, error_reason = summarize_exception(e)
+                    error_msg = f"[{fetcher.name}] ({error_type}) {error_reason}"
+                    logger.warning(
+                        f"[数据源失败 {attempt}/{total_market_fetchers}] [{fetcher.name}] {stock_code}: "
+                        f"error_type={error_type}, reason={error_reason}"
+                    )
+                    errors.append(error_msg)
+                    if attempt < total_market_fetchers:
+                        next_fetcher = market_fetchers[attempt]
+                        logger.info(
+                            "[数据源切换] %s %s: [%s] -> [%s], reason=%s",
+                            fast_path_label,
+                            stock_code,
+                            fetcher.name,
+                            next_fetcher.name,
+                            error_reason,
                         )
-                        if df is not None and not df.empty:
-                            elapsed = time.time() - request_start
-                            logger.info(
-                                f"[数据源完成] {stock_code} 使用 [{fetcher.name}] 获取成功: "
-                                f"rows={len(df)}, elapsed={elapsed:.2f}s"
-                            )
-                            return df, fetcher.name
-                    except Exception as e:
-                        error_type, error_reason = summarize_exception(e)
-                        error_msg = f"[{fetcher.name}] ({error_type}) {error_reason}"
-                        logger.warning(
-                            f"[数据源失败 {attempt}/{total_fetchers}] [{fetcher.name}] {stock_code}: "
-                            f"error_type={error_type}, reason={error_reason}"
-                        )
-                        errors.append(error_msg)
             error_summary = f"{fast_path_label} {stock_code} 获取失败:\n" + "\n".join(errors)
             elapsed = time.time() - request_start
             logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
@@ -875,7 +967,7 @@ class DataFetcherManager:
         if _market_tag(stock_code) == "cn":
             general_fetchers = [
                 fetcher for fetcher in general_fetchers
-                if fetcher.name != "LongbridgeFetcher"
+                if fetcher.name not in {"LongbridgeFetcher", "TwelveDataFetcher"}
             ]
         general_total_fetchers = len(general_fetchers)
 
@@ -1037,72 +1129,114 @@ class DataFetcherManager:
 
         # 美股指数由 YfinanceFetcher 处理（在美股股票检查之前）
         if is_us_index_code(stock_code):
-            for fetcher in self._fetchers:
-                if fetcher.name not in {"YfinanceFetcher", "LongbridgeFetcher"}:
+            index_fetchers = self._get_us_index_fetcher_chain()
+            if index_fetchers:
+                logger.info(
+                    "[实时行情链路] 美股指数 %s 使用链路: %s",
+                    stock_code,
+                    self._describe_fetcher_chain(index_fetchers),
+                )
+            total_index_fetchers = len(index_fetchers)
+            for attempt, fetcher in enumerate(index_fetchers, start=1):
+                if not hasattr(fetcher, 'get_realtime_quote'):
                     continue
-                source_name = "yfinance" if fetcher.name == "YfinanceFetcher" else "longbridge"
-                if hasattr(fetcher, 'get_realtime_quote'):
-                    try:
-                        quote = fetcher.get_realtime_quote(stock_code)
-                        if quote is not None:
-                            logger.info(f"[实时行情] 美股指数 {stock_code} 成功获取 (来源: {source_name})")
-                            return quote
-                    except Exception as e:
-                        logger.warning(f"[实时行情] 美股指数 {stock_code} 获取失败 ({fetcher.name}): {e}")
+                try:
+                    quote = fetcher.get_realtime_quote(stock_code)
+                    if quote is not None and quote.has_basic_data():
+                        logger.info(f"[实时行情] 美股指数 {stock_code} 成功获取 (来源: {fetcher.name})")
+                        return quote
+                    error_reason = "返回为空或缺少基本价格字段"
+                    logger.warning(f"[实时行情] 美股指数 {stock_code} 获取失败 ({fetcher.name}): {error_reason}")
+                except Exception as e:
+                    error_type, error_reason = summarize_exception(e)
+                    logger.warning(
+                        f"[实时行情] 美股指数 {stock_code} 获取失败 ({fetcher.name}): "
+                        f"{error_type}: {error_reason}"
+                    )
+                if attempt < total_index_fetchers:
+                    next_fetcher = index_fetchers[attempt]
+                    logger.info(
+                        "[实时行情切换] 美股指数 %s: [%s] -> [%s]",
+                        stock_code,
+                        fetcher.name,
+                        next_fetcher.name,
+                    )
             if log_final_failure:
                 logger.warning(f"[实时行情] 美股指数 {stock_code} 无可用数据源")
             return None
 
-        # 美股单独处理，优先 Yfinance，再回退 Longbridge。
+        # 美股个股使用 API 优先链，Yfinance 永远最后兜底。
         if _is_us_code(stock_code):
-            for fetcher in self._fetchers:
-                if fetcher.name not in {"YfinanceFetcher", "LongbridgeFetcher"}:
+            us_fetchers = self._get_us_hk_priority_chain(stock_code)
+            if us_fetchers:
+                logger.info(
+                    "[实时行情链路] 美股 %s 使用链路: %s",
+                    stock_code,
+                    self._describe_fetcher_chain(us_fetchers),
+                )
+            total_us_fetchers = len(us_fetchers)
+            for attempt, fetcher in enumerate(us_fetchers, start=1):
+                if not hasattr(fetcher, 'get_realtime_quote'):
                     continue
-                source_name = "yfinance" if fetcher.name == "YfinanceFetcher" else "longbridge"
-                if hasattr(fetcher, 'get_realtime_quote'):
-                    try:
-                        quote = fetcher.get_realtime_quote(stock_code)
-                        if quote is not None:
-                            logger.info(f"[实时行情] 美股 {stock_code} 成功获取 (来源: {source_name})")
-                            return quote
-                    except Exception as e:
-                        logger.warning(f"[实时行情] 美股 {stock_code} 获取失败 ({fetcher.name}): {e}")
+                try:
+                    quote = fetcher.get_realtime_quote(stock_code)
+                    if quote is not None and quote.has_basic_data():
+                        logger.info(f"[实时行情] 美股 {stock_code} 成功获取 (来源: {fetcher.name})")
+                        return quote
+                    error_reason = "返回为空或缺少基本价格字段"
+                    logger.warning(f"[实时行情] 美股 {stock_code} 获取失败 ({fetcher.name}): {error_reason}")
+                except Exception as e:
+                    error_type, error_reason = summarize_exception(e)
+                    logger.warning(
+                        f"[实时行情] 美股 {stock_code} 获取失败 ({fetcher.name}): "
+                        f"{error_type}: {error_reason}"
+                    )
+                if attempt < total_us_fetchers:
+                    next_fetcher = us_fetchers[attempt]
+                    logger.info(
+                        "[实时行情切换] 美股 %s: [%s] -> [%s]",
+                        stock_code,
+                        fetcher.name,
+                        next_fetcher.name,
+                    )
             if log_final_failure:
                 logger.warning(f"[实时行情] 美股 {stock_code} 无可用数据源")
             return None
 
-        # 港股实时行情只走港股专用入口，优先 Yfinance，再回退 Longbridge / Akshare 港股接口。
+        # 港股个股使用 API 优先链，Yfinance 永远最后兜底。
         if _is_hk_market(stock_code):
-            ordered_fetchers = sorted(
-                self._fetchers,
-                key=lambda fetcher: (
-                    0 if fetcher.name == "YfinanceFetcher"
-                    else 1 if fetcher.name == "LongbridgeFetcher"
-                    else 2 if fetcher.name == "AkshareFetcher"
-                    else 3
-                ),
-            )
-            for fetcher in ordered_fetchers:
-                if fetcher.name not in {"YfinanceFetcher", "LongbridgeFetcher", "AkshareFetcher"}:
-                    continue
+            hk_fetchers = self._get_us_hk_priority_chain(stock_code)
+            if hk_fetchers:
+                logger.info(
+                    "[实时行情链路] 港股 %s 使用链路: %s",
+                    stock_code,
+                    self._describe_fetcher_chain(hk_fetchers),
+                )
+            total_hk_fetchers = len(hk_fetchers)
+            for attempt, fetcher in enumerate(hk_fetchers, start=1):
                 if not hasattr(fetcher, 'get_realtime_quote'):
                     continue
                 try:
-                    if fetcher.name == "AkshareFetcher":
-                        quote = fetcher.get_realtime_quote(stock_code, source="hk")
-                    else:
-                        quote = fetcher.get_realtime_quote(stock_code)
+                    quote = fetcher.get_realtime_quote(stock_code)
                     if quote is not None and quote.has_basic_data():
-                        if fetcher.name == "YfinanceFetcher":
-                            source_name = "yfinance_hk"
-                        elif fetcher.name == "LongbridgeFetcher":
-                            source_name = "longbridge_hk"
-                        else:
-                            source_name = "akshare_hk"
-                        logger.info(f"[实时行情] 港股 {stock_code} 成功获取 (来源: {source_name})")
+                        logger.info(f"[实时行情] 港股 {stock_code} 成功获取 (来源: {fetcher.name})")
                         return quote
+                    error_reason = "返回为空或缺少基本价格字段"
+                    logger.warning(f"[实时行情] 港股 {stock_code} 获取失败 ({fetcher.name}): {error_reason}")
                 except Exception as e:
-                    logger.warning(f"[实时行情] 港股 {stock_code} 获取失败 ({fetcher.name}): {e}")
+                    error_type, error_reason = summarize_exception(e)
+                    logger.warning(
+                        f"[实时行情] 港股 {stock_code} 获取失败 ({fetcher.name}): "
+                        f"{error_type}: {error_reason}"
+                    )
+                if attempt < total_hk_fetchers:
+                    next_fetcher = hk_fetchers[attempt]
+                    logger.info(
+                        "[实时行情切换] 港股 %s: [%s] -> [%s]",
+                        stock_code,
+                        fetcher.name,
+                        next_fetcher.name,
+                    )
 
             if log_final_failure:
                 logger.warning(f"[实时行情] 港股 {stock_code} 无可用数据源")

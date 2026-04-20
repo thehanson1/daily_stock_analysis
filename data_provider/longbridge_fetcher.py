@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-LongbridgeFetcher - 长桥兜底数据源 (Priority 5)
+LongbridgeFetcher - 长桥 API 数据源 (Priority 5)
 ===================================
 
 数据来源：长桥 OpenAPI (https://open.longbridge.com)
 特点：覆盖美股 + 港股，可计算量比/换手率/PE 等 yfinance 缺失字段
-定位：美股/港股最后兜底数据源
+定位：美股/港股 API 优先链候选数据源
 
 关键策略：
 1. 组合 quote + static_info 接口计算 turnover_rate / pe_ratio / total_mv
@@ -216,7 +216,7 @@ def _to_longbridge_symbol(stock_code: str) -> Optional[str]:
 
 
 class LongbridgeFetcher(BaseFetcher):
-    """长桥 OpenAPI 美股/港股兜底数据源。"""
+    """长桥 OpenAPI 美股/港股数据源。"""
 
     name = "LongbridgeFetcher"
     priority = int(os.getenv("LONGBRIDGE_PRIORITY", "5"))
@@ -260,6 +260,10 @@ class LongbridgeFetcher(BaseFetcher):
             )
         self._available = has_creds
         return has_creds
+
+    def is_api_ready(self) -> bool:
+        """供 DataFetcherManager 判断是否应纳入 US/HK API 优先链。"""
+        return self._is_available()
 
     def _get_ctx(self):
         if self._ctx is not None:
