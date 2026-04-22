@@ -51,6 +51,14 @@ function formatMoney(value: number | undefined | null, currency = 'CNY'): string
   })}`;
 }
 
+function formatUnitPrice(value: number | undefined | null, currency: string): string {
+  if (value == null || Number.isNaN(value)) return '--';
+  return `${Number(value).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })} ${currency}`;
+}
+
 function formatPct(value: number | undefined | null): string {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(2)}%`;
@@ -688,11 +696,46 @@ const PortfolioPage: React.FC = () => {
                       <td className="py-2 pr-2 text-secondary">{row.accountName}</td>
                       <td className="py-2 pr-2 font-mono text-white">{row.symbol}</td>
                       <td className="py-2 pr-2 text-right">{row.quantity.toFixed(2)}</td>
-                      <td className="py-2 pr-2 text-right">{row.avgCost.toFixed(4)}</td>
-                      <td className="py-2 pr-2 text-right">{row.lastPrice.toFixed(4)}</td>
-                      <td className="py-2 pr-2 text-right">{formatMoney(row.marketValueBase, row.valuationCurrency)}</td>
+                      <td className="py-2 pr-2 text-right">{formatUnitPrice(row.avgCost, row.currency)}</td>
+                      <td className="py-2 pr-2 text-right">
+                        {row.lastPriceSource === 'cost_fallback' ? (
+                          <div className="text-amber-300">
+                            --
+                            <div className="text-[11px] text-secondary">缺行情</div>
+                          </div>
+                        ) : (
+                          formatUnitPrice(row.lastPrice, row.currency)
+                        )}
+                      </td>
+                      <td className="py-2 pr-2 text-right">
+                        {row.lastPriceSource === 'cost_fallback' ? (
+                          <div className="text-amber-300">
+                            --
+                            <div className="text-[11px] text-secondary">缺行情</div>
+                          </div>
+                        ) : (
+                          <>
+                            <div>{formatMoney(row.marketValueLocal, row.currency)}</div>
+                            {row.currency !== row.valuationCurrency ? (
+                              <div className="text-[11px] text-secondary">{formatMoney(row.marketValueBase, row.valuationCurrency)}</div>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
                       <td className={`py-2 text-right ${row.unrealizedPnlBase >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {formatMoney(row.unrealizedPnlBase, row.valuationCurrency)}
+                        {row.lastPriceSource === 'cost_fallback' ? (
+                          <div className="text-amber-300">
+                            --
+                            <div className="text-[11px] text-secondary">缺行情</div>
+                          </div>
+                        ) : (
+                          <>
+                            <div>{formatMoney(row.unrealizedPnlLocal, row.currency)}</div>
+                            {row.currency !== row.valuationCurrency ? (
+                              <div className="text-[11px] text-secondary">{formatMoney(row.unrealizedPnlBase, row.valuationCurrency)}</div>
+                            ) : null}
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}

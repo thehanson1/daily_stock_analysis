@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -276,6 +277,40 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(acc["total_cash"], 1600.0, places=6)
         self.assertAlmostEqual(pos["quantity"], 100.0, places=6)
         self.assertAlmostEqual(pos["avg_cost"], 5.0, places=6)
+
+    def test_snapshot_uses_realtime_price_when_daily_close_missing(self) -> None:
+        account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="USD")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date.today(),
+            direction="in",
+            amount=1000,
+            currency="USD",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="AAPL",
+            trade_date=date.today(),
+            side="buy",
+            quantity=10,
+            price=100,
+            market="us",
+            currency="USD",
+        )
+
+        with patch.object(self.service, "_resolve_position_price", return_value=(120.0, "realtime_quote")):
+            snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=date.today(), cost_method="fifo")
+
+        acc = snapshot["accounts"][0]
+        pos = acc["positions"][0]
+        self.assertAlmostEqual(pos["last_price"], 120.0, places=6)
+        self.assertEqual(pos["last_price_source"], "realtime_quote")
+        self.assertAlmostEqual(pos["market_value_local"], 1200.0, places=6)
+        self.assertAlmostEqual(pos["market_value_base"], 1200.0, places=6)
+        self.assertAlmostEqual(pos["unrealized_pnl_local"], 200.0, places=6)
+        self.assertAlmostEqual(pos["unrealized_pnl_base"], 200.0, places=6)
 
 
 if __name__ == "__main__":

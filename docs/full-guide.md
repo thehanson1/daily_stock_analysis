@@ -1055,6 +1055,11 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
   - CSV parse + commit operations (supports `dry_run`)
   - event list panel with filters and pagination
   - broker selector fallback to built-in brokers (`huatai/citic/cmb`) when broker list API fails or returns empty
+- 持仓明细口径：
+  - `现价` 优先显示标的本币价格；有日线收盘价时使用收盘价，若当天缺日线价则尝试实时行情补价
+  - 当既无日线价也无实时行情时，页面会明确显示“缺行情”，不再把成本价伪装成现价
+  - `市值` 与 `未实现盈亏` 优先显示标的本币金额；若账户基准币不同，会额外附一行显示折算后的基准币金额
+  - API 位置字段同步补充 `last_price_source`、`market_value_local`、`unrealized_pnl_local`，避免前端把本币价格与基准币金额混在同一口径下展示
 
 ### Risk sector concentration semantics
 - Added `sector_concentration` in `GET /api/v1/portfolio/risk`.

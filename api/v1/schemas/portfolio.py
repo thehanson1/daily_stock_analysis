@@ -153,7 +153,10 @@ class PortfolioPositionItem(BaseModel):
     avg_cost: float
     total_cost: float
     last_price: float
+    last_price_source: str = "daily_close"
+    market_value_local: float
     market_value_base: float
+    unrealized_pnl_local: float
     unrealized_pnl_base: float
     valuation_currency: str
 

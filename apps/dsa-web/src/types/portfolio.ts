@@ -35,7 +35,10 @@ export interface PortfolioPositionItem {
   avgCost: number;
   totalCost: number;
   lastPrice: number;
+  lastPriceSource: string;
+  marketValueLocal: number;
   marketValueBase: number;
+  unrealizedPnlLocal: number;
   unrealizedPnlBase: number;
   valuationCurrency: string;
 }

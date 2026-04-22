@@ -788,11 +788,13 @@ class PortfolioService:
                     }
                 )
 
-            last_price = self.repo.get_latest_close(symbol=symbol, as_of=as_of_date)
+            last_price, last_price_source = self._resolve_position_price(symbol=symbol, as_of_date=as_of_date)
             if last_price is None or last_price <= 0:
                 last_price = avg_cost
+                last_price_source = "cost_fallback"
 
             local_market_value = qty * float(last_price)
+            local_unrealized_pnl = local_market_value - total_cost
             market_base, stale_market, _ = self._convert_amount(
                 amount=local_market_value,
                 from_currency=currency,
@@ -817,7 +819,10 @@ class PortfolioService:
                     "avg_cost": round(avg_cost, 8),
                     "total_cost": round(total_cost, 8),
                     "last_price": round(float(last_price), 8),
+                    "last_price_source": last_price_source,
+                    "market_value_local": round(local_market_value, 8),
                     "market_value_base": round(market_base, 8),
+                    "unrealized_pnl_local": round(local_unrealized_pnl, 8),
                     "unrealized_pnl_base": round(unrealized_base, 8),
                     "valuation_currency": account.base_currency,
                 }
@@ -827,6 +832,26 @@ class PortfolioService:
             total_cost_base += cost_base
 
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
+
+    def _resolve_position_price(self, *, symbol: str, as_of_date: date) -> Tuple[Optional[float], str]:
+        last_price = self.repo.get_latest_close(symbol=symbol, as_of=as_of_date)
+        if last_price is not None and last_price > 0:
+            return float(last_price), "daily_close"
+
+        if as_of_date < date.today():
+            return None, "missing"
+
+        try:
+            from data_provider import DataFetcherManager
+
+            quote = DataFetcherManager().get_realtime_quote(symbol)
+            price = float(getattr(quote, "price", 0.0) or 0.0) if quote is not None else 0.0
+            if price > 0:
+                return price, "realtime_quote"
+        except Exception as exc:
+            logger.debug("Portfolio realtime price lookup failed for %s: %s", symbol, exc)
+
+        return None, "missing"
 
     @staticmethod
     def _consume_fifo_lots(lots: List[Dict[str, Any]], quantity: float, symbol: str) -> float:
