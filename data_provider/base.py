@@ -732,6 +732,7 @@ class DataFetcherManager:
           1. AkshareFetcher (Priority 1)
           2. PytdxFetcher (Priority 2) - 通达信
           2. TushareFetcher (Priority 2)
+          2. IBKRFetcher (Priority 2) - Interactive Brokers
           3. BaostockFetcher (Priority 3)
           4. YfinanceFetcher (Priority 4)
         """
@@ -743,6 +744,8 @@ class DataFetcherManager:
         from .yfinance_fetcher import YfinanceFetcher
         from .twelvedata_fetcher import TwelveDataFetcher
         from .longbridge_fetcher import LongbridgeFetcher
+        from .ibkr_fetcher import IBKRFetcher
+        
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
         akshare = AkshareFetcher()
@@ -752,6 +755,7 @@ class DataFetcherManager:
         yfinance = YfinanceFetcher()
         twelvedata = TwelveDataFetcher()
         longbridge = LongbridgeFetcher()
+        ibkr = IBKRFetcher()        # Interactive Brokers
 
         # 初始化数据源列表
         self._fetchers = [
@@ -763,6 +767,7 @@ class DataFetcherManager:
             twelvedata,
             yfinance,
             longbridge,
+            ibkr,
         ]
 
         # 按优先级排序（Tushare 如果配置了 Token 且初始化成功，优先级为 0）

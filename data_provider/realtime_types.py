@@ -102,6 +102,7 @@ class RealtimeSource(Enum):
     STOOQ = "stooq"                 # Stooq 美股兜底
     TWELVEDATA = "twelvedata"       # Twelve Data 美港股 API 数据源
     LONGBRIDGE = "longbridge"       # 长桥 OpenAPI 美港股兜底
+    IBKR = "ibkr"                   # Interactive Brokers 券商数据源
     FALLBACK = "fallback"           # 降级兜底
 
 
