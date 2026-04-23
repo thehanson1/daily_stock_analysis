@@ -1286,13 +1286,28 @@ class DataFetcherManager:
         # 获取配置的数据源优先级
         source_priority = config.realtime_source_priority.split(',')
         
+        # 验证数据源配置有效性
+        VALID_SOURCES = {'efinance', 'akshare_em', 'akshare_sina', 'tencent', 'akshare_qq', 'tushare'}
+        invalid_sources = [s.strip().lower() for s in source_priority if s.strip().lower() and s.strip().lower() not in VALID_SOURCES]
+        if invalid_sources:
+            logger.warning(
+                "[实时行情配置] 检测到无效的数据源: %s，有效值: %s",
+                ', '.join(invalid_sources),
+                ', '.join(sorted(VALID_SOURCES))
+            )
+        
         errors = []
         # primary_quote holds the first successful result; we may supplement
         # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
         primary_quote = None
+        supplement_attempts = 0
         
         for source in source_priority:
             source = source.strip().lower()
+            
+            # 跳过空值和无效数据源
+            if not source or source not in VALID_SOURCES:
+                continue
             
             try:
                 quote = None
@@ -1347,7 +1362,6 @@ class DataFetcherManager:
                             return primary_quote
                         # Otherwise, continue to try later sources for missing fields
                         logger.debug(f"[实时行情] {stock_code} 部分字段缺失，尝试从后续数据源补充")
-                        supplement_attempts = 0
                     else:
                         # Supplement missing fields from this source (limit attempts)
                         supplement_attempts += 1

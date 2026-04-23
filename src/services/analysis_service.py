@@ -36,7 +36,9 @@ class AnalysisService:
         report_type: str = "detailed",
         force_refresh: bool = False,
         query_id: Optional[str] = None,
-        send_notification: bool = True
+        send_notification: bool = True,
+        original_query: Optional[str] = None,
+        selection_source: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行股票分析
@@ -47,6 +49,8 @@ class AnalysisService:
             force_refresh: 是否强制刷新
             query_id: 查询 ID（可选）
             send_notification: 是否发送通知（API 触发默认发送）
+            original_query: 用户原始输入（用于追踪和审计）
+            selection_source: 选股来源（manual/autocomplete/import/image）
             
         Returns:
             分析结果字典，包含:
@@ -89,8 +93,20 @@ class AnalysisService:
                 logger.warning(f"分析股票 {stock_code} 返回空结果")
                 return None
             
+            # 将元数据附加到结果中（用于响应和审计）
+            if original_query:
+                setattr(result, 'original_query', original_query)
+            if selection_source:
+                setattr(result, 'selection_source', selection_source)
+            
             # 构建响应
-            return self._build_analysis_response(result, query_id, report_type=rt.value)
+            return self._build_analysis_response(
+                result, 
+                query_id, 
+                report_type=rt.value,
+                original_query=original_query,
+                selection_source=selection_source
+            )
             
         except Exception as e:
             logger.error(f"分析股票 {stock_code} 失败: {e}", exc_info=True)
@@ -101,6 +117,8 @@ class AnalysisService:
         result: Any, 
         query_id: str,
         report_type: str = "detailed",
+        original_query: Optional[str] = None,
+        selection_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         构建分析响应
@@ -109,6 +127,8 @@ class AnalysisService:
             result: AnalysisResult 对象
             query_id: 查询 ID
             report_type: 归一化后的报告类型
+            original_query: 用户原始输入
+            selection_source: 选股来源
             
         Returns:
             格式化的响应字典
@@ -131,6 +151,8 @@ class AnalysisService:
                 "current_price": result.current_price,
                 "change_pct": result.change_pct,
                 "model_used": getattr(result, "model_used", None),
+                "original_query": original_query,
+                "selection_source": selection_source,
             },
             "summary": {
                 "analysis_summary": result.analysis_summary,

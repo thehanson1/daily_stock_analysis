@@ -1326,3 +1326,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [1.2.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v1.0.0
+- [修复] 实时行情补充字段变量作用域问题 — 修复 `supplement_attempts` 变量在循环开始前未初始化导致的潜在 `UnboundLocalError`，确保字段补充逻辑稳定运行
+- [修复] 数据源配置验证缺失 — 新增实时行情数据源配置有效性检查，无效数据源名称会在日志中明确警告并跳过，避免配置错误被静默忽略
+- [改进] 异步任务元数据传递完整性 — `original_query` 和 `selection_source` 参数现在完整传递到分析服务层并包含在响应中，用于用户行为追踪和审计

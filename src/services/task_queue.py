@@ -291,6 +291,8 @@ class AnalysisTaskQueue:
                         report_type,
                         force_refresh,
                         notify,
+                        original_query,
+                        selection_source,
                     )
                 except Exception:
                     # 回滚当前批次，避免 API 拿不到 task_id 却留下半提交任务。
@@ -394,6 +396,8 @@ class AnalysisTaskQueue:
         report_type: str,
         force_refresh: bool,
         notify: bool = True,
+        original_query: Optional[str] = None,
+        selection_source: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -403,6 +407,9 @@ class AnalysisTaskQueue:
             stock_code: 股票代码
             report_type: 报告类型
             force_refresh: 是否强制刷新
+            notify: 是否发送通知
+            original_query: 原始查询（用于上下文追踪）
+            selection_source: 选股来源（用于来源追踪）
             
         Returns:
             分析结果字典
@@ -425,6 +432,7 @@ class AnalysisTaskQueue:
             from src.services.analysis_service import AnalysisService
             
             # 执行分析
+            # 传递上下文元数据用于追踪和审计
             service = AnalysisService()
             result = service.analyze_stock(
                 stock_code=stock_code,
@@ -432,6 +440,8 @@ class AnalysisTaskQueue:
                 force_refresh=force_refresh,
                 query_id=task_id,
                 send_notification=notify,
+                original_query=original_query,
+                selection_source=selection_source,
             )
             
             if result:
