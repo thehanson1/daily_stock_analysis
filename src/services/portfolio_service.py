@@ -789,25 +789,34 @@ class PortfolioService:
                 )
 
             last_price, last_price_source = self._resolve_position_price(symbol=symbol, as_of_date=as_of_date)
-            if last_price is None or last_price <= 0:
-                last_price = avg_cost
-                last_price_source = "cost_fallback"
 
-            local_market_value = qty * float(last_price)
-            local_unrealized_pnl = local_market_value - total_cost
-            market_base, stale_market, _ = self._convert_amount(
-                amount=local_market_value,
-                from_currency=currency,
-                to_currency=account.base_currency,
-                as_of_date=as_of_date,
-            )
+            market_base = None
+            unrealized_base = None
+            local_market_value = None
+            local_unrealized_pnl = None
+            stale_market = False
             cost_base, stale_cost, _ = self._convert_amount(
                 amount=total_cost,
                 from_currency=currency,
                 to_currency=account.base_currency,
                 as_of_date=as_of_date,
             )
-            unrealized_base = market_base - cost_base
+
+            if last_price is not None and last_price > 0:
+                local_market_value = qty * float(last_price)
+                local_unrealized_pnl = local_market_value - total_cost
+                market_base, stale_market, _ = self._convert_amount(
+                    amount=local_market_value,
+                    from_currency=currency,
+                    to_currency=account.base_currency,
+                    as_of_date=as_of_date,
+                )
+                unrealized_base = market_base - cost_base
+                market_value_base += market_base
+            else:
+                last_price = None
+                last_price_source = "missing"
+
             fx_stale = fx_stale or stale_market or stale_cost
 
             position_rows.append(
@@ -818,17 +827,16 @@ class PortfolioService:
                     "quantity": round(qty, 8),
                     "avg_cost": round(avg_cost, 8),
                     "total_cost": round(total_cost, 8),
-                    "last_price": round(float(last_price), 8),
+                    "last_price": round(float(last_price), 8) if last_price is not None else None,
                     "last_price_source": last_price_source,
-                    "market_value_local": round(local_market_value, 8),
-                    "market_value_base": round(market_base, 8),
-                    "unrealized_pnl_local": round(local_unrealized_pnl, 8),
-                    "unrealized_pnl_base": round(unrealized_base, 8),
+                    "market_value_local": round(local_market_value, 8) if local_market_value is not None else None,
+                    "market_value_base": round(market_base, 8) if market_base is not None else None,
+                    "unrealized_pnl_local": round(local_unrealized_pnl, 8) if local_unrealized_pnl is not None else None,
+                    "unrealized_pnl_base": round(unrealized_base, 8) if unrealized_base is not None else None,
                     "valuation_currency": account.base_currency,
                 }
             )
 
-            market_value_base += market_base
             total_cost_base += cost_base
 
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale

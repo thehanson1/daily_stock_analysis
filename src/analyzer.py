@@ -491,9 +491,17 @@ def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
         battle = battle if isinstance(battle, dict) else {}
         sp = battle.get("sniper_points")
         sp = sp if isinstance(sp, dict) else {}
+        ideal_buy = sp.get("ideal_buy")
+        secondary_buy = sp.get("secondary_buy")
         stop_loss = sp.get("stop_loss")
         if stop_loss is None or (isinstance(stop_loss, str) and not stop_loss.strip()):
             missing.append("dashboard.battle_plan.sniper_points.stop_loss")
+        if ideal_buy is None or (isinstance(ideal_buy, str) and not ideal_buy.strip()):
+            missing.append("dashboard.battle_plan.sniper_points.ideal_buy")
+        if secondary_buy is None or (isinstance(secondary_buy, str) and not secondary_buy.strip()):
+            missing.append("dashboard.battle_plan.sniper_points.secondary_buy")
+        elif str(ideal_buy).strip() == str(secondary_buy).strip():
+            missing.append("dashboard.battle_plan.sniper_points.secondary_buy")
     return len(missing) == 0, missing
 
 
@@ -521,14 +529,23 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
                 result.dashboard["intelligence"] = {}
             if "risk_alerts" not in result.dashboard["intelligence"]:
                 result.dashboard["intelligence"]["risk_alerts"] = []
-        elif field == "dashboard.battle_plan.sniper_points.stop_loss":
+        elif field in (
+            "dashboard.battle_plan.sniper_points.stop_loss",
+            "dashboard.battle_plan.sniper_points.ideal_buy",
+            "dashboard.battle_plan.sniper_points.secondary_buy",
+        ):
             if not result.dashboard:
                 result.dashboard = {}
             if "battle_plan" not in result.dashboard:
                 result.dashboard["battle_plan"] = {}
             if "sniper_points" not in result.dashboard["battle_plan"]:
                 result.dashboard["battle_plan"]["sniper_points"] = {}
-            result.dashboard["battle_plan"]["sniper_points"]["stop_loss"] = "待补充"
+            if field == "dashboard.battle_plan.sniper_points.stop_loss":
+                result.dashboard["battle_plan"]["sniper_points"]["stop_loss"] = "待补充"
+            elif field == "dashboard.battle_plan.sniper_points.ideal_buy":
+                result.dashboard["battle_plan"]["sniper_points"]["ideal_buy"] = "待补充"
+            elif field == "dashboard.battle_plan.sniper_points.secondary_buy":
+                result.dashboard["battle_plan"]["sniper_points"]["secondary_buy"] = "待补充"
 
 
 # ---------- chip_structure fallback (Issue #589) ----------

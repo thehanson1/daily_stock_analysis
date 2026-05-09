@@ -151,6 +151,14 @@ class FeishuSender:
                 logger.debug(f"飞书响应状态码: {response.status_code}")
                 logger.debug(f"飞书响应内容: {response.text}")
 
+                if response.status_code == 429 and attempt < _MAX_RETRIES:
+                    delay = 2 * (attempt + 1)
+                    logger.warning(
+                        f"飞书返回 HTTP 429，{delay}s 后重试 ({attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    time.sleep(delay)
+                    continue
+
                 # 5xx 服务端错误可重试
                 if response.status_code >= 500 and attempt < _MAX_RETRIES:
                     delay = 2 * (attempt + 1)
@@ -166,12 +174,18 @@ class FeishuSender:
                     if code == 0:
                         logger.info("飞书消息发送成功")
                         return True
-                    else:
-                        error_msg = result.get('msg') or result.get('StatusMessage', '未知错误')
-                        error_code = result.get('code') or result.get('StatusCode', 'N/A')
-                        logger.error(f"飞书返回错误 [code={error_code}]: {error_msg}")
-                        logger.error(f"完整响应: {result}")
-                        return False
+                    if str(code) in {"429", "230020", "230028"} and attempt < _MAX_RETRIES:
+                        delay = 2 * (attempt + 1)
+                        logger.warning(
+                            f"飞书返回限流错误码 {code}，{delay}s 后重试 ({attempt + 1}/{_MAX_RETRIES})"
+                        )
+                        time.sleep(delay)
+                        continue
+                    error_msg = result.get('msg') or result.get('StatusMessage', '未知错误')
+                    error_code = result.get('code') or result.get('StatusCode', 'N/A')
+                    logger.error(f"飞书返回错误 [code={error_code}]: {error_msg}")
+                    logger.error(f"完整响应: {result}")
+                    return False
                 else:
                     logger.error(f"飞书请求失败: HTTP {response.status_code}")
                     logger.error(f"响应内容: {response.text}")

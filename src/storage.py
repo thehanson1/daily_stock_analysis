@@ -499,9 +499,9 @@ class PortfolioPosition(Base):
     quantity = Column(Float, nullable=False, default=0.0)
     avg_cost = Column(Float, nullable=False, default=0.0)
     total_cost = Column(Float, nullable=False, default=0.0)
-    last_price = Column(Float, nullable=False, default=0.0)
-    market_value_base = Column(Float, nullable=False, default=0.0)
-    unrealized_pnl_base = Column(Float, nullable=False, default=0.0)
+    last_price = Column(Float)
+    market_value_base = Column(Float)
+    unrealized_pnl_base = Column(Float)
     valuation_currency = Column(String(8), nullable=False, default='CNY')
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
 

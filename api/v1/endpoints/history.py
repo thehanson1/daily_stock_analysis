@@ -218,13 +218,18 @@ def get_history_detail(
             enhanced_context = context_snapshot.get("enhanced_context") or {}
             realtime = enhanced_context.get("realtime") or {}
             current_price = realtime.get("price")
-            change_pct = realtime.get("change_pct") or realtime.get("change_60d")
-            
-            # 也尝试从 realtime_quote_raw 获取
+            change_pct = realtime.get("change_pct")
+
+            realtime_quote_raw = context_snapshot.get("realtime_quote_raw") or {}
+
             if current_price is None:
-                realtime_quote_raw = context_snapshot.get("realtime_quote_raw") or {}
                 current_price = realtime_quote_raw.get("price")
-                change_pct = change_pct or realtime_quote_raw.get("change_pct") or realtime_quote_raw.get("pct_chg")
+
+            if change_pct is None:
+                raw_change_pct = realtime_quote_raw.get("change_pct")
+                if raw_change_pct is None:
+                    raw_change_pct = realtime_quote_raw.get("pct_chg")
+                change_pct = raw_change_pct
         
         # 构建响应模型
         meta = ReportMeta(

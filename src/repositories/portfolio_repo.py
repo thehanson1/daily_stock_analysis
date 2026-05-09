@@ -602,9 +602,9 @@ class PortfolioRepository:
                         quantity=float(item["quantity"]),
                         avg_cost=float(item["avg_cost"]),
                         total_cost=float(item["total_cost"]),
-                        last_price=float(item["last_price"]),
-                        market_value_base=float(item["market_value_base"]),
-                        unrealized_pnl_base=float(item["unrealized_pnl_base"]),
+                        last_price=float(item["last_price"]) if item["last_price"] is not None else None,
+                        market_value_base=float(item["market_value_base"]) if item["market_value_base"] is not None else None,
+                        unrealized_pnl_base=float(item["unrealized_pnl_base"]) if item["unrealized_pnl_base"] is not None else None,
                         valuation_currency=valuation_currency,
                     )
                 )
@@ -736,9 +736,9 @@ class PortfolioRepository:
                         quantity=float(item["quantity"]),
                         avg_cost=float(item["avg_cost"]),
                         total_cost=float(item["total_cost"]),
-                        last_price=float(item["last_price"]),
-                        market_value_base=float(item["market_value_base"]),
-                        unrealized_pnl_base=float(item["unrealized_pnl_base"]),
+                        last_price=float(item["last_price"]) if item["last_price"] is not None else None,
+                        market_value_base=float(item["market_value_base"]) if item["market_value_base"] is not None else None,
+                        unrealized_pnl_base=float(item["unrealized_pnl_base"]) if item["unrealized_pnl_base"] is not None else None,
                         valuation_currency=valuation_currency,
                     )
                 )
