@@ -78,10 +78,15 @@ USER_AGENTS = [
 # - 批量分析场景：通常 30 只股票在 5 分钟内分析完，20 分钟足够覆盖
 # - 实时性要求：股票分析不需要秒级实时数据，20 分钟延迟可接受
 # - 防封禁：减少 API 调用频率
+#
+# Issue #1098: 负缓存（空结果）使用更短 TTL (60秒)，
+# 避免失败请求长时间阻塞后续重试。
+_NEGATIVE_CACHE_TTL = 60  # 负缓存（空结果）TTL：60秒
+
 _realtime_cache: Dict[str, Any] = {
     'data': None,
     'timestamp': 0,
-    'ttl': 1200  # 20分钟缓存有效期
+    'ttl': 1200  # 20分钟缓存有效期（成功结果）
 }
 _realtime_cache_lock = threading.Lock()
 
@@ -89,7 +94,7 @@ _realtime_cache_lock = threading.Lock()
 _etf_realtime_cache: Dict[str, Any] = {
     'data': None,
     'timestamp': 0,
-    'ttl': 1200  # 20分钟缓存有效期
+    'ttl': 1200  # 20分钟缓存有效期（成功结果）
 }
 _etf_realtime_cache_lock = threading.Lock()
 
@@ -896,6 +901,7 @@ class AkshareFetcher(BaseFetcher):
                         time.sleep(min(2 ** attempt, 5))
 
                 # 更新缓存：成功缓存数据；失败也缓存空数据，避免同一轮任务对同一接口反复请求
+                is_negative = df is None or (isinstance(df, pd.DataFrame) and df.empty)
                 if df is None:
                     logger.error(f"[API错误] ak.stock_zh_a_spot_em 最终失败: {last_error}")
                     circuit_breaker.record_failure(source_key, str(last_error))
@@ -903,7 +909,9 @@ class AkshareFetcher(BaseFetcher):
                 with _realtime_cache_lock:
                     _realtime_cache['data'] = df
                     _realtime_cache['timestamp'] = current_time
-                logger.info(f"[缓存更新] A股实时行情(东财) 缓存已刷新，TTL={_realtime_cache['ttl']}s")
+                    # Issue #1098: 负缓存（空结果）使用更短 TTL，避免失败请求长时间阻塞后续重试
+                    _realtime_cache['ttl'] = _NEGATIVE_CACHE_TTL if is_negative else 1200
+                    logger.info(f"[缓存更新] A股实时行情(东财) 缓存已刷新，TTL={_realtime_cache['ttl']}s{' (负缓存)' if is_negative else ''}")
 
             if df is None or df.empty:
                 logger.warning(f"[实时行情] A股实时行情数据为空，跳过 {stock_code}")
@@ -1307,6 +1315,7 @@ class AkshareFetcher(BaseFetcher):
                         logger.warning(f"[API错误] ak.fund_etf_spot_em 获取失败 (attempt {attempt}/2): {e}")
                         time.sleep(min(2 ** attempt, 5))
 
+                is_etf_negative = df is None or (isinstance(df, pd.DataFrame) and df.empty)
                 if df is None:
                     logger.error(f"[API错误] ak.fund_etf_spot_em 最终失败: {last_error}")
                     circuit_breaker.record_failure(source_key, str(last_error))
@@ -1314,6 +1323,8 @@ class AkshareFetcher(BaseFetcher):
                 with _etf_realtime_cache_lock:
                     _etf_realtime_cache['data'] = df
                     _etf_realtime_cache['timestamp'] = current_time
+                    # Issue #1098: 负缓存（空结果）使用更短 TTL
+                    _etf_realtime_cache['ttl'] = _NEGATIVE_CACHE_TTL if is_etf_negative else 1200
 
             if df is None or df.empty:
                 logger.warning(f"[实时行情] ETF实时行情数据为空，跳过 {stock_code}")

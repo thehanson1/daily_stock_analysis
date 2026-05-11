@@ -200,8 +200,10 @@ def resolve_llm_channel_protocol(
     if base_url:
         parsed = urlparse(base_url)
         if parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0"}:
-            # Default to openai for local servers (vLLM, LM Studio, LocalAI, etc.).
-            # Ollama users should set PROTOCOL=ollama explicitly or name the channel "ollama".
+            # Issue #690: Ollama 默认端口 11434，自动推断为 ollama 协议
+            if parsed.port == 11434:
+                return "ollama"
+            # Other local servers default to openai (vLLM, LM Studio, LocalAI, etc.)
             return "openai"
         return "openai"
 

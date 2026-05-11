@@ -156,6 +156,7 @@ class LLMToolAdapter:
         self._config = config
         self._router = None          # litellm Router (multi-key primary model)
         self._litellm_available = False
+        self._config_signature = None  # Issue #152: detect config changes for hot-reload
         self._register_custom_model_pricing()
         self._init_litellm()
 
@@ -245,6 +246,44 @@ class LLMToolAdapter:
             )
         else:
             logger.info(f"Agent LLM: litellm initialized (model={litellm_model})")
+
+        # Issue #152: record config signature for hot-reload detection
+        self._config_signature = self._compute_config_signature(self._config)
+
+    @staticmethod
+    def _compute_config_signature(config) -> tuple:
+        """Compute a lightweight signature of LLM-relevant config (Issue #152).
+
+        Used to detect runtime config changes (e.g. model switch via WebUI)
+        so the Router can be re-initialized without restarting the process.
+        """
+        model_list = getattr(config, 'llm_model_list', None) or []
+        models_tuple = tuple(
+            e.get('litellm_params', {}).get('model', '')
+            for e in model_list
+        )
+        return (getattr(config, 'litellm_model', '') or '', models_tuple)
+
+    def _maybe_reinit_router(self) -> None:
+        """Re-initialize Router if runtime config has changed (Issue #152).
+
+        When users switch models via WebUI, Config.reset_instance() is called
+        and get_config() returns the new config. However, the Router created
+        during __init__ still holds the old model_list. This method detects
+        the change and rebuilds the Router lazily on the next LLM call.
+        """
+        fresh_config = get_config()
+        current_sig = self._compute_config_signature(fresh_config)
+        if self._config_signature is not None and current_sig != self._config_signature:
+            logger.info("[Issue #152] Agent LLM config changed, re-initializing Router...")
+            self._config = fresh_config
+            self._router = None
+            self._litellm_available = False
+            self._init_litellm()
+            # _init_litellm updates _config_signature internally
+        else:
+            # Even if signature unchanged, refresh cached config reference
+            self._config = fresh_config
 
     @property
     def is_available(self) -> bool:
@@ -342,6 +381,7 @@ class LLMToolAdapter:
         timeout: Optional[float] = None,
     ) -> LLMResponse:
         """Shared completion path for both tool and text-only calls."""
+        self._maybe_reinit_router()  # Issue #152: hot-reload Router on config change
         config = self._config
         models_to_try = get_effective_agent_models_to_try(config)
         started_at = time.time()

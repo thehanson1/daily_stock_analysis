@@ -5,6 +5,8 @@
 职责：
 1. 通过 webhook 发送飞书消息
 """
+import hashlib
+import hmac
 import logging
 from typing import Dict, Any
 import requests
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuSender:
-    
+
     def __init__(self, config: Config):
         """
         初始化飞书配置
@@ -29,6 +31,9 @@ class FeishuSender:
         self._feishu_url = getattr(config, 'feishu_webhook_url', None)
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._webhook_verify_ssl = getattr(config, 'webhook_verify_ssl', True)
+        # Issue #773: 读取飞书自定义机器人签名密钥和关键词
+        self._feishu_webhook_secret = getattr(config, 'feishu_webhook_secret', None)
+        self._feishu_webhook_keyword = getattr(config, 'feishu_webhook_keyword', None)
     
           
     def send_to_feishu(self, content: str) -> bool:
@@ -120,6 +125,30 @@ class FeishuSender:
             requests.exceptions.Timeout,
             requests.exceptions.ChunkedEncodingError,
         ))
+
+    def _sign_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Issue #773: 当配置了飞书签名密钥时，注入 timestamp + sign 到 payload 顶层。
+
+        飞书自定义机器人签名算法：
+        1. timestamp = 当前秒级时间戳字符串
+        2. 把 timestamp 与 payload 的 body 部分拼接：f"{timestamp}\\n{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+        3. sign = hmac_sha256(secret, 拼接串).hexdigest()
+        """
+        if not self._feishu_webhook_secret:
+            return payload
+        import json as _json
+        timestamp = str(int(time.time()))
+        body_str = _json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        string_to_sign = f"{timestamp}\n{body_str}"
+        sign = hmac.new(
+            self._feishu_webhook_secret.encode('utf-8'),
+            string_to_sign.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        signed = dict(payload)
+        signed["timestamp"] = timestamp
+        signed["sign"] = sign
+        return signed
 
     def _send_feishu_message(self, content: str) -> bool:
         """发送单条飞书消息（优先使用 Markdown 卡片，网络异常自动重试）"""
@@ -218,7 +247,7 @@ class FeishuSender:
             }
         }
 
-        if _post_payload(card_payload):
+        if _post_payload(self._sign_payload(card_payload)):
             return True
 
         # 2) 回退为普通文本消息
@@ -229,4 +258,8 @@ class FeishuSender:
             }
         }
 
-        return _post_payload(text_payload)
+        # 关键词注入：当配置了关键词校验时，在文本末尾追加关键词以确保消息通过校验
+        if self._feishu_webhook_keyword:
+            text_payload["content"]["text"] += f"\n{self._feishu_webhook_keyword}"
+
+        return _post_payload(self._sign_payload(text_payload))

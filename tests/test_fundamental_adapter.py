@@ -221,5 +221,145 @@ class TestFundamentalAdapter(unittest.TestCase):
         self.assertTrue(result["evidence"])
 
 
+    # --- #1034: get_fundamental_bundle fail-open regression ---
+
+    def test_fundamental_bundle_all_sources_fail_returns_not_supported(self):
+        """所有数据源失败时应返回 not_supported 而非抛异常。"""
+        adapter = AkshareFundamentalAdapter()
+        with patch.object(adapter, "_call_df_candidates", return_value=(None, None, ["stock_financial_abstract:ImportError"])):
+            result = adapter.get_fundamental_bundle("600519")
+        self.assertEqual(result["status"], "not_supported")
+        self.assertIn("stock_financial_abstract:ImportError", result["errors"])
+        self.assertEqual(result["growth"], {})
+        self.assertEqual(result["earnings"], {})
+        self.assertIsInstance(result["source_chain"], list)
+
+    def test_fundamental_bundle_partial_growth_only(self):
+        """仅 growth 数据源成功时应返回 partial。"""
+        adapter = AkshareFundamentalAdapter()
+        fin_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "营业收入同比": [15.3],
+            "净利润同比": [20.1],
+            "净资产收益率": [28.5],
+            "毛利率": [91.2],
+        })
+        call_count = 0
+        def _mock_call(candidates):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (fin_df, "stock_financial_abstract", [])
+            return (None, None, [f"source{call_count}:ConnectionError"])
+        with patch.object(adapter, "_call_df_candidates", side_effect=_mock_call):
+            result = adapter.get_fundamental_bundle("600519")
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("revenue_yoy", result["growth"])
+        self.assertAlmostEqual(result["growth"]["revenue_yoy"], 15.3)
+        self.assertGreater(len(result["source_chain"]), 0)
+        self.assertGreater(len(result["errors"]), 0)
+
+    def test_fundamental_bundle_full_data(self):
+        """所有数据源成功时应返回 ok。"""
+        adapter = AkshareFundamentalAdapter()
+        fin_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "营业收入同比": [15.3],
+            "净利润同比": [20.1],
+            "净资产收益率": [28.5],
+            "毛利率": [91.2],
+        })
+        forecast_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "预告": ["预计净利润增长20%-30%"],
+        })
+        inst_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "机构持仓比例": [5.2],
+        })
+        call_count = 0
+        def _mock_call(candidates):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (fin_df, "stock_financial_abstract", [])
+            if call_count == 2:
+                return (forecast_df, "stock_yjyg_em", [])
+            if call_count == 3:
+                return (inst_df, "stock_rpdc_em", [])
+            return (None, None, [])
+        with patch.object(adapter, "_call_df_candidates", side_effect=_mock_call):
+            result = adapter.get_fundamental_bundle("600519")
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("growth", result["source_chain"][0])
+
+    # --- #1034: get_capital_flow fail-open regression ---
+
+    def test_capital_flow_all_sources_fail_returns_not_supported(self):
+        """所有资金流数据源失败时应返回 not_supported 而非抛异常。"""
+        adapter = AkshareFundamentalAdapter()
+        with patch.object(adapter, "_call_df_candidates", return_value=(None, None, ["stock_individual_fund_flow:HTTPError"])):
+            result = adapter.get_capital_flow("600519")
+        self.assertEqual(result["status"], "not_supported")
+        self.assertIn("stock_individual_fund_flow:HTTPError", result["errors"])
+        self.assertEqual(result["stock_flow"], {})
+
+    def test_capital_flow_partial_stock_only(self):
+        """仅个股资金流成功时应返回 partial。"""
+        adapter = AkshareFundamentalAdapter()
+        stock_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "主力净流入": [5000000],
+            "5日": [20000000],
+            "10日": [40000000],
+        })
+        call_count = 0
+        def _mock_call(candidates):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (stock_df, "stock_individual_fund_flow", [])
+            return (None, None, [f"sector{call_count}:ConnectionError"])
+        with patch.object(adapter, "_call_df_candidates", side_effect=_mock_call):
+            result = adapter.get_capital_flow("600519")
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("main_net_inflow", result["stock_flow"])
+        self.assertGreater(len(result["source_chain"]), 0)
+
+    def test_capital_flow_full_data(self):
+        """个股和板块资金流均成功时应包含完整数据。"""
+        adapter = AkshareFundamentalAdapter()
+        stock_df = pd.DataFrame({
+            "股票代码": ["600519"],
+            "主力净流入": [5000000],
+            "5日": [20000000],
+            "10日": [40000000],
+        })
+        sector_df = pd.DataFrame({
+            "板块": ["白酒", "新能源", "半导体"],
+            "净流入": [100000000, -50000000, 30000000],
+        })
+        call_count = 0
+        def _mock_call(candidates):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (stock_df, "stock_individual_fund_flow", [])
+            return (sector_df, "stock_sector_fund_flow_rank", [])
+        with patch.object(adapter, "_call_df_candidates", side_effect=_mock_call):
+            result = adapter.get_capital_flow("600519")
+        self.assertIn("main_net_inflow", result["stock_flow"])
+        self.assertGreater(len(result["sector_rankings"]["top"]), 0)
+        self.assertGreater(len(result["sector_rankings"]["bottom"]), 0)
+
+    def test_capital_flow_empty_df_returns_not_supported(self):
+        """空 DataFrame 返回 not_supported。"""
+        adapter = AkshareFundamentalAdapter()
+        empty_df = pd.DataFrame()
+        with patch.object(adapter, "_call_df_candidates", return_value=(empty_df, None, [])):
+            result = adapter.get_capital_flow("600519")
+        self.assertEqual(result["status"], "not_supported")
+
+
 if __name__ == "__main__":
     unittest.main()

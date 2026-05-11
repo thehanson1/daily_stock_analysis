@@ -11,6 +11,8 @@ import unittest
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 from unittest import mock
+import requests
+
 from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -169,6 +171,51 @@ class TestFeishuSender(unittest.TestCase):
         sender = FeishuSender(cfg)
         result = sender.send_to_feishu("hello")
         self.assertFalse(result)
+
+    @mock.patch("src.notification_sender.feishu_sender.time.sleep")
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_retries_on_http_429_then_succeeds(self, mock_post, mock_sleep):
+        mock_post.side_effect = [_response(429), _response(200, {"code": 0})]
+        cfg = _config(feishu_webhook_url="https://feishu.example/hook")
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once_with(2)
+
+    @mock.patch("src.notification_sender.feishu_sender.time.sleep")
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_retries_on_rate_limit_code_then_succeeds(self, mock_post, mock_sleep):
+        mock_post.side_effect = [
+            _response(200, {"code": 230020, "msg": "rate limited"}),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(feishu_webhook_url="https://feishu.example/hook")
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once_with(2)
+
+    @mock.patch("src.notification_sender.feishu_sender.time.sleep")
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_retries_on_connection_error_then_succeeds(self, mock_post, mock_sleep):
+        mock_post.side_effect = [
+            requests.exceptions.ConnectionError("boom"),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(feishu_webhook_url="https://feishu.example/hook")
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once_with(2)
 
 
 class TestEmailSender(unittest.TestCase):

@@ -241,7 +241,8 @@ class TestAnalyzerMarketPrompt(unittest.TestCase):
              patch.object(analyzer, "_parse_response", return_value=parsed), \
              patch.object(analyzer, "_build_market_snapshot", return_value={}), \
              patch("src.analyzer.persist_llm_usage"), \
-             patch("src.analyzer.logger.info") as mock_logger_info:
+             patch("src.analyzer.logger.info") as mock_logger_info, \
+             patch("src.analyzer.logger.debug") as mock_logger_debug:
             cfg = MagicMock()
             cfg.gemini_request_delay = 0
             cfg.report_integrity_enabled = False
@@ -253,10 +254,15 @@ class TestAnalyzerMarketPrompt(unittest.TestCase):
             result = analyzer.analyze(context, news_context="news")
 
         self.assertEqual(result.model_used, "gemini/gemini-2.5-flash")
-        logged_messages = [str(call.args[0]) for call in mock_logger_info.call_args_list if call.args]
+        info_messages = [str(call.args[0]) for call in mock_logger_info.call_args_list if call.args]
+        debug_messages = [str(call.args[0]) for call in mock_logger_debug.call_args_list if call.args]
         self.assertTrue(
-            any("[LLM返回] gemini/gemini-2.5-flash 响应成功" in message for message in logged_messages)
+            any("[LLM返回] gemini/gemini-2.5-flash 响应成功" in message for message in info_messages)
         )
+        self.assertFalse(any("[LLM Prompt 预览]" in message for message in info_messages))
+        self.assertFalse(any("[LLM返回 预览]" in message for message in info_messages))
+        self.assertTrue(any("[LLM Prompt 预览]" in message for message in debug_messages))
+        self.assertTrue(any("[LLM返回 预览]" in message for message in debug_messages))
 
 
 if __name__ == "__main__":

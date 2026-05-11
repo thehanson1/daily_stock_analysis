@@ -1203,6 +1203,7 @@ class GeminiAnalyzer:
         """
         self._router = None
         self._litellm_available = False
+        self._config_signature = None  # Issue #152: detect config changes for hot-reload
         self._init_litellm()
         if not self._litellm_available:
             logger.warning("No LLM configured (LITELLM_MODEL / API keys), AI analysis will be unavailable")
@@ -1276,6 +1277,43 @@ class GeminiAnalyzer:
                 f"Analyzer LLM: litellm initialized (model={litellm_model}, "
                 f"API key from environment)"
             )
+        # Issue #152: record config signature for hot-reload detection
+        self._config_signature = self._compute_config_signature(config)
+
+    @staticmethod
+    def _compute_config_signature(config: Config) -> tuple:
+        """Compute a lightweight signature of LLM-relevant config (Issue #152).
+
+        Used to detect runtime config changes (e.g. model switch via WebUI)
+        so the Router can be re-initialized without restarting the process.
+        """
+        model_list = config.llm_model_list or []
+        models_tuple = tuple(
+            e.get('litellm_params', {}).get('model', '')
+            for e in model_list
+        )
+        return (config.litellm_model or '', models_tuple)
+
+    def _maybe_reinit_router(self) -> None:
+        """Re-initialize Router if runtime config has changed (Issue #152).
+
+        When users switch models via WebUI, Config.reset_instance() is called
+        and get_config() returns the new config. However, the Router created
+        during __init__ still holds the old model_list. This method detects
+        the change and rebuilds the Router lazily on the next LLM call.
+        """
+        config = get_config()
+        current_sig = self._compute_config_signature(config)
+        if self._config_signature is not None and current_sig != self._config_signature:
+            logger.info(
+                "[Issue #152] LLM config changed (old=%s, new=%s), re-initializing Router...",
+                self._config_signature[0], current_sig[0]
+            )
+            self._router = None
+            self._litellm_available = False
+            self._init_litellm()
+            # _init_litellm updates _config_signature internally
+
 
     def is_available(self) -> bool:
         """Check if LiteLLM is properly configured with at least one API key."""
@@ -1476,6 +1514,7 @@ class GeminiAnalyzer:
         Returns:
             Tuple of (response text, model_used, usage).
         """
+        self._maybe_reinit_router()  # Issue #152: hot-reload Router on config change
         config = get_config()
         max_tokens = (
             generation_config.get('max_output_tokens')
@@ -1703,9 +1742,9 @@ class GeminiAnalyzer:
             logger.info(f"[LLM配置] Prompt 长度: {len(prompt)} 字符")
             logger.info(f"[LLM配置] 是否包含新闻: {'是' if news_context else '否'}")
 
-            # 记录完整 prompt 到日志（INFO级别记录摘要，DEBUG记录完整）
+            # 避免默认 INFO 日志泄露 LLM prompt/response 内容，仅在 DEBUG 级别输出预览与完整内容
             prompt_preview = prompt[:500] + "..." if len(prompt) > 500 else prompt
-            logger.info(f"[LLM Prompt 预览]\n{prompt_preview}")
+            logger.debug(f"[LLM Prompt 预览]\n{prompt_preview}")
             logger.debug(f"=== 完整 Prompt ({len(prompt)}字符) ===\n{prompt}\n=== End Prompt ===")
 
             # 设置生成配置
@@ -1745,7 +1784,7 @@ class GeminiAnalyzer:
                     f"[LLM返回] {model_used} 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符"
                 )
                 response_preview = response_text[:300] + "..." if len(response_text) > 300 else response_text
-                logger.info(f"[LLM返回 预览]\n{response_preview}")
+                logger.debug(f"[LLM返回 预览]\n{response_preview}")
                 logger.debug(
                     f"=== {model_used} 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ==="
                 )

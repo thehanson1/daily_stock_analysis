@@ -633,12 +633,12 @@ class SystemConfigService:
             name = raw_name.strip()
             if not name:
                 continue
-            if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                 issues.append(
                     {
                         "key": "LLM_CHANNELS",
                         "code": "invalid_channel_name",
-                        "message": f"LLM channel name '{name}' may only contain letters, numbers, and underscores",
+                        "message": f"LLM channel name '{name}' may only contain letters, numbers, underscores, and hyphens",
                         "severity": "error",
                         "expected": "letters/numbers/underscores",
                         "actual": name,
@@ -646,7 +646,7 @@ class SystemConfigService:
                 )
                 continue
 
-            normalized_upper = name.upper()
+            normalized_upper = name.upper().replace("-", "_")
             if normalized_upper in seen_names:
                 issues.append(
                     {
@@ -664,7 +664,7 @@ class SystemConfigService:
             normalized_names.append(name)
 
         for name in normalized_names:
-            prefix = f"LLM_{name.upper()}"
+            prefix = f"LLM_{name.upper().replace("-", "_")}"
             protocol_value = (effective_map.get(f"{prefix}_PROTOCOL") or "").strip()
             base_url_value = (effective_map.get(f"{prefix}_BASE_URL") or "").strip()
             api_key_value = (
@@ -706,7 +706,7 @@ class SystemConfigService:
             if not name:
                 continue
 
-            prefix = f"LLM_{name.upper()}"
+            prefix = f"LLM_{name.upper().replace("-", "_")}"
             enabled = parse_env_bool(effective_map.get(f"{prefix}_ENABLED"), default=True)
             if not enabled:
                 continue

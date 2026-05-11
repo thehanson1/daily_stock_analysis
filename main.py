@@ -534,6 +534,11 @@ def run_full_analysis(
 
         # Issue #190: 合并推送（个股+大盘复盘）
         if merge_notification and (results or market_report) and not args.no_notify:
+            # Issue #1055: log warning when stock results are empty
+            if not results:
+                logger.warning(
+                "合并推送模式：个股分析无结果，仅推送大盘复盘 (Issue #1055: 检查上游个股分析是否全部失败)"
+                )
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")

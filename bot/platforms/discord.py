@@ -11,6 +11,7 @@ Discord 平台适配器
 """
 
 import logging
+import time
 from typing import Dict, Any, Optional
 
 from bot.platforms.base import BotPlatform
@@ -22,29 +23,76 @@ logger = logging.getLogger(__name__)
 
 class DiscordPlatform(BotPlatform):
     """Discord 平台适配器"""
-    
+
+    def __init__(self):
+        from src.config import get_config
+        config = get_config()
+        self._public_key = getattr(config, 'discord_interactions_public_key', None)
+
     @property
     def platform_name(self) -> str:
         """平台标识名称"""
         return "discord"
-    
+
     def verify_request(self, headers: Dict[str, str], body: bytes) -> bool:
         """验证 Discord Webhook 请求签名
-        
-        Discord Webhook 签名验证：
+
+        Discord Interactions 签名验证（Ed25519）：
         1. 从请求头获取 X-Signature-Ed25519 和 X-Signature-Timestamp
-        2. 使用公钥验证签名
-        
+        2. 构造验证消息：timestamp_bytes + body
+        3. 使用公钥验证 Ed25519 签名
+
         Args:
             headers: HTTP 请求头
             body: 请求体原始字节
-            
+
         Returns:
             签名是否有效
         """
-        # TODO: 实现 Discord Webhook 签名验证
-        # 当前暂时返回 True，后续需要完善
-        return True
+        if not self._public_key:
+            logger.warning("[Discord] 未配置 discord_interactions_public_key，跳过签名验证")
+            return True
+
+        # 头部名大小写不敏感处理
+        sig = None
+        ts = None
+        for k, v in headers.items():
+            key_lower = k.lower()
+            if key_lower == 'x-signature-ed25519':
+                sig = v
+            elif key_lower == 'x-signature-timestamp':
+                ts = v
+
+        if not sig or not ts:
+            logger.warning("[Discord] 缺少签名头 X-Signature-Ed25519 或 X-Signature-Timestamp")
+            return False
+
+        # 验证时间戳新鲜度（5 分钟内有效）
+        try:
+            request_time = float(ts)
+            if abs(time.time() - request_time) > 300:
+                logger.warning("[Discord] 时间戳过期 (>5min)")
+                return False
+        except (ValueError, TypeError):
+            logger.warning("[Discord] 无效的 X-Signature-Timestamp")
+            return False
+
+        # Ed25519 签名验证
+        try:
+            from nacl.signing import VerifyKey
+            from nacl.encoding import HexEncoder
+            from nacl.exceptions import BadSignatureError
+
+            verify_key = VerifyKey(self._public_key, encoder=HexEncoder)
+            message = ts.encode('utf-8') + body
+            verify_key.verify(message, bytes.fromhex(sig))
+            return True
+        except BadSignatureError:
+            logger.warning("[Discord] Ed25519 签名验证失败")
+            return False
+        except Exception as e:
+            logger.error(f"[Discord] 签名验证异常: {e}")
+            return False
     
     def parse_message(self, data: Dict[str, Any]) -> Optional[BotMessage]:
         """解析 Discord 消息为统一格式

@@ -175,6 +175,20 @@ jobs:
           # ==========================================
           STOCK_LIST: ${{ vars.STOCK_LIST || secrets.STOCK_LIST || '600519' }}
           MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || secrets.MARKET_REVIEW_REGION || 'cn' }}
+
+          # Stock-to-email group routing (Issue #860)
+          # Configure STOCK_GROUP_N and EMAIL_GROUP_N in GitHub Variables/Secrets
+          # Example: STOCK_GROUP_1=600519,000001 EMAIL_GROUP_1=user1@example.com,user2@example.com
+          STOCK_GROUP_1: ${{ vars.STOCK_GROUP_1 || secrets.STOCK_GROUP_1 }}
+          EMAIL_GROUP_1: ${{ vars.EMAIL_GROUP_1 || secrets.EMAIL_GROUP_1 }}
+          STOCK_GROUP_2: ${{ vars.STOCK_GROUP_2 || secrets.STOCK_GROUP_2 }}
+          EMAIL_GROUP_2: ${{ vars.EMAIL_GROUP_2 || secrets.EMAIL_GROUP_2 }}
+          STOCK_GROUP_3: ${{ vars.STOCK_GROUP_3 || secrets.STOCK_GROUP_3 }}
+          EMAIL_GROUP_3: ${{ vars.EMAIL_GROUP_3 || secrets.EMAIL_GROUP_3 }}
+          STOCK_GROUP_4: ${{ vars.STOCK_GROUP_4 || secrets.STOCK_GROUP_4 }}
+          EMAIL_GROUP_4: ${{ vars.EMAIL_GROUP_4 || secrets.EMAIL_GROUP_4 }}
+          STOCK_GROUP_5: ${{ vars.STOCK_GROUP_5 || secrets.STOCK_GROUP_5 }}
+          EMAIL_GROUP_5: ${{ vars.EMAIL_GROUP_5 || secrets.EMAIL_GROUP_5 }}
           
           # ==========================================
           # 运行配置 ⬅️ 新增！

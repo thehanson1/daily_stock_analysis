@@ -11,7 +11,15 @@ if "newspaper" not in sys.modules:
     mock_np.Config = MagicMock()
     sys.modules["newspaper"] = mock_np
 
-from src.search_service import SearchResponse, SearchResult, SearchService, XAIXSearchProvider
+import requests
+from src.search_service import (
+    SearchResponse,
+    SearchResult,
+    SearchService,
+    XAIXSearchProvider,
+    _post_with_retry,
+)
+
 
 
 def _fake_response(query: str) -> SearchResponse:
@@ -463,6 +471,74 @@ class TestXAIXSearchProvider(unittest.TestCase):
         self.assertEqual(response.results[0].url, "https://x.com/i/status/123")
         self.assertIn("stable ad demand", response.results[0].title.lower() + " " + response.results[0].snippet.lower())
         self.assertEqual(response.results[1].url, "https://x.com/i/status/456")
+
+
+def _response(status_code: int, json_body=None):
+    """Helper to build a mock requests.Response."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.text = "ok" if status_code == 200 else "error"
+    if json_body is not None:
+        resp.json.return_value = json_body
+    return resp
+
+
+class TestSearchRetryHelpers(unittest.TestCase):
+    """Regression tests for _post_with_retry tenacity retry on transient errors (#445)."""
+
+    @patch.object(_post_with_retry.retry, "sleep", return_value=None)
+    @patch("src.search_service.requests.post")
+    def test_post_with_retry_retries_on_ssl_error_then_succeeds(self, mock_post, _mock_sleep):
+        ok_resp = _response(200)
+        mock_post.side_effect = [
+            requests.exceptions.SSLError("ssl boom"),
+            ok_resp,
+        ]
+
+        result = _post_with_retry(
+            "https://api.bocha.cn/v1/web-search",
+            headers={"Authorization": "Bearer test"},
+            json={"query": "贵州茅台"},
+            timeout=10,
+        )
+
+        self.assertIs(result, ok_resp)
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch.object(_post_with_retry.retry, "sleep", return_value=None)
+    @patch("src.search_service.requests.post")
+    def test_post_with_retry_retries_on_connection_error_then_succeeds(self, mock_post, _mock_sleep):
+        ok_resp = _response(200)
+        mock_post.side_effect = [
+            requests.exceptions.ConnectionError("conn boom"),
+            ok_resp,
+        ]
+
+        result = _post_with_retry(
+            "https://api.bocha.cn/v1/web-search",
+            headers={"Authorization": "Bearer test"},
+            json={"query": "腾讯控股"},
+            timeout=10,
+        )
+
+        self.assertIs(result, ok_resp)
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch.object(_post_with_retry.retry, "sleep", return_value=None)
+    @patch("src.search_service.requests.post")
+    def test_post_with_retry_raises_after_max_retries_exhausted(self, mock_post, _mock_sleep):
+        import tenacity
+        mock_post.side_effect = requests.exceptions.Timeout("timeout boom")
+
+        with self.assertRaises(tenacity.RetryError):
+            _post_with_retry(
+                "https://api.bocha.cn/v1/web-search",
+                headers={"Authorization": "Bearer test"},
+                json={"query": "test"},
+                timeout=10,
+            )
+
+        self.assertEqual(mock_post.call_count, 3)
 
 
 if __name__ == "__main__":
