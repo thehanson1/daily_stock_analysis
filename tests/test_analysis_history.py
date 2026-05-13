@@ -150,14 +150,32 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         """model_used should be persisted in raw_result for history detail."""
         result = self._build_result()
         result.model_used = "gemini/gemini-2.0-flash"
+        result.query_id = "query_003"
+        result.strategy_id = "bull_trend"
+        result.raw_response = "debug prompt and raw model output"
+        result.dashboard = {
+            "meta": {
+                "headers": {"Authorization": "Bearer token"},
+                "safe": "kept",
+            }
+        }
+        context_snapshot = {
+            "enhanced_context": {
+                "metadata": {
+                    "headers": {"Authorization": "Bearer token"},
+                    "access_token": "secret-token",
+                    "safe": "kept",
+                }
+            }
+        }
 
         saved = self.db.save_analysis_history(
             result=result,
             query_id="query_003",
             report_type="simple",
             news_content="新闻摘要",
-            context_snapshot=None,
-            save_snapshot=False
+            context_snapshot=context_snapshot,
+            save_snapshot=True
         )
         self.assertEqual(saved, 1)
 
@@ -167,6 +185,64 @@ class AnalysisHistoryTestCase(unittest.TestCase):
                 self.fail("未找到保存的历史记录")
             payload = json.loads(row.raw_result or "{}")
             self.assertEqual(payload.get("model_used"), "gemini/gemini-2.0-flash")
+            self.assertEqual(payload.get("query_id"), "query_003")
+            self.assertEqual(payload.get("strategy_id"), "bull_trend")
+            self.assertNotIn("raw_response", payload)
+            self.assertNotIn("headers", payload.get("dashboard", {}).get("meta", {}))
+            self.assertEqual(payload.get("dashboard", {}).get("meta", {}).get("safe"), "kept")
+            snapshot_payload = json.loads(row.context_snapshot or "{}")
+            metadata = snapshot_payload.get("enhanced_context", {}).get("metadata", {})
+            self.assertNotIn("headers", metadata)
+            self.assertNotIn("access_token", metadata)
+            self.assertEqual(metadata.get("safe"), "kept")
+
+    def test_sqlite_migration_adds_strategy_columns_to_legacy_db(self) -> None:
+        """Existing SQLite files should receive additive strategy_id columns."""
+        DatabaseManager.reset_instance()
+        import sqlite3
+
+        os.remove(self._db_path)
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                "CREATE TABLE analysis_history (id INTEGER PRIMARY KEY, code VARCHAR(32) NOT NULL)"
+            )
+            conn.execute(
+                "CREATE TABLE backtest_results (id INTEGER PRIMARY KEY, analysis_history_id INTEGER NOT NULL, code VARCHAR(32) NOT NULL)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.db = DatabaseManager.get_instance()
+        with self.db._engine.connect() as conn:
+            analysis_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(analysis_history)")}
+            backtest_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(backtest_results)")}
+
+        self.assertIn("strategy_id", analysis_cols)
+        self.assertIn("strategy_id", backtest_cols)
+
+    def test_remote_sql_code_column_migration_uses_dialect_specific_ddl(self) -> None:
+        """Remote SQL dialects should get explicit code column widening DDL."""
+        from types import SimpleNamespace
+
+        manager = object.__new__(DatabaseManager)
+        manager._engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        conn = MagicMock()
+        inspector = MagicMock()
+        inspector.get_columns.return_value = [
+            {
+                "name": "code",
+                "type": SimpleNamespace(length=10),
+                "nullable": False,
+            }
+        ]
+
+        manager._widen_code_column_if_needed(conn, inspector, "analysis_history")
+
+        conn.exec_driver_sql.assert_called_once_with(
+            "ALTER TABLE analysis_history ALTER COLUMN code TYPE VARCHAR(32)"
+        )
 
     def test_history_detail_hides_placeholder_model_used(self) -> None:
         """Placeholder model values should be normalized to None in detail response."""

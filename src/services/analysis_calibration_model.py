@@ -4,8 +4,7 @@
 Default strategy:
 1. Prefer a tree-based classifier (HistGradientBoostingClassifier) when
    scikit-learn is available.
-2. Support a conservative LogisticRegression backend as a stronger linear
-   baseline for small/medium datasets.
+2. Support LogisticRegression only when explicitly selected.
 3. Train a global model plus per-market submodels when enough samples exist.
 4. Fall back to the previous Gaussian Naive Bayes implementation only when the
    sklearn backend is unavailable or the scoped sample set is too small.
@@ -240,9 +239,6 @@ class SmallCalibrationModel:
 
         if backend == _TREE_BACKEND:
             trained = cls._fit_tree_backend(train_samples, validation_samples, feature_names, labels)
-            if trained is not None:
-                return trained
-            trained = cls._fit_logistic_backend(train_samples, validation_samples, feature_names, labels)
             if trained is not None:
                 return trained
         elif backend == _LOGISTIC_BACKEND:

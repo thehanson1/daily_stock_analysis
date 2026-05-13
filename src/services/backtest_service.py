@@ -51,6 +51,7 @@ class BacktestService:
             eval_window_days=int(eval_window_days),
             neutral_band_pct=neutral_band_pct,
             engine_version=str(engine_version),
+            entry_mode=str(getattr(config, "backtest_entry_mode", "next_open") or "next_open"),
         )
 
         candidates = self.repo.get_candidates(
@@ -252,14 +253,25 @@ class BacktestService:
         """Return real strategy-level backtest summary metrics.
 
         Queries pre-computed strategy-dimension summaries from the backtest
-        storage layer. Falls back to the overall rollup when no strategy
-        summary has been accumulated yet (e.g. new strategy with no history).
+        storage layer. Falls back to the overall rollup only as a clearly
+        marked legacy baseline when no strategy summary has been accumulated.
         """
         summary = self.get_summary(scope="strategy", code=strategy_id, eval_window_days=eval_window_days)
         if summary is not None:
-            return self._normalize_learning_summary(summary)
-        # fallback: overall summary as safe default for strategies without history
-        return self.get_global_summary(eval_window_days=eval_window_days)
+            normalized = self._normalize_learning_summary(summary)
+            if normalized is not None:
+                normalized["strategy_id"] = strategy_id
+                normalized["source_scope"] = "strategy"
+                normalized["is_fallback"] = False
+            return normalized
+
+        fallback = self.get_global_summary(eval_window_days=eval_window_days)
+        if fallback is None:
+            return None
+        fallback["strategy_id"] = strategy_id
+        fallback["source_scope"] = "overall"
+        fallback["is_fallback"] = True
+        return fallback
 
     def _resolve_analysis_date(self, analysis) -> Optional[date]:
         parsed = self.repo.parse_analysis_date_from_snapshot(analysis.context_snapshot)
@@ -330,6 +342,29 @@ class BacktestService:
                 summary = self._build_summary_model(data)
                 self.repo.upsert_summary(summary)
 
+            strategy_ids = sorted(
+                {
+                    str(row.strategy_id).strip()
+                    for row in overall_rows
+                    if str(getattr(row, "strategy_id", "") or "").strip()
+                }
+            )
+            for strategy_id in strategy_ids:
+                rows = [
+                    row
+                    for row in overall_rows
+                    if str(getattr(row, "strategy_id", "") or "").strip() == strategy_id
+                ]
+                data = BacktestEngine.compute_summary(
+                    results=rows,
+                    scope="strategy",
+                    code=strategy_id,
+                    eval_window_days=eval_window_days,
+                    engine_version=engine_version,
+                )
+                summary = self._build_summary_model(data)
+                self.repo.upsert_summary(summary)
+
     @staticmethod
     def _build_summary_model(summary_data: Dict[str, Any]) -> BacktestSummary:
         return BacktestSummary(
@@ -361,36 +396,7 @@ class BacktestService:
 
     @staticmethod
     def _result_to_dict(row: BacktestResult) -> Dict[str, Any]:
-        return {
-            "analysis_history_id": row.analysis_history_id,
-            "code": row.code,
-            "analysis_date": row.analysis_date.isoformat() if row.analysis_date else None,
-            "eval_window_days": row.eval_window_days,
-            "engine_version": row.engine_version,
-            "eval_status": row.eval_status,
-            "evaluated_at": row.evaluated_at.isoformat() if row.evaluated_at else None,
-            "operation_advice": row.operation_advice,
-            "position_recommendation": row.position_recommendation,
-            "start_price": row.start_price,
-            "end_close": row.end_close,
-            "max_high": row.max_high,
-            "min_low": row.min_low,
-            "stock_return_pct": row.stock_return_pct,
-            "direction_expected": row.direction_expected,
-            "direction_correct": row.direction_correct,
-            "outcome": row.outcome,
-            "stop_loss": row.stop_loss,
-            "take_profit": row.take_profit,
-            "hit_stop_loss": row.hit_stop_loss,
-            "hit_take_profit": row.hit_take_profit,
-            "first_hit": row.first_hit,
-            "first_hit_date": row.first_hit_date.isoformat() if row.first_hit_date else None,
-            "first_hit_trading_days": row.first_hit_trading_days,
-            "simulated_entry_price": row.simulated_entry_price,
-            "simulated_exit_price": row.simulated_exit_price,
-            "simulated_exit_reason": row.simulated_exit_reason,
-            "simulated_return_pct": row.simulated_return_pct,
-        }
+        return row.to_dict()
 
     @staticmethod
     def _summary_to_dict(row: BacktestSummary) -> Dict[str, Any]:

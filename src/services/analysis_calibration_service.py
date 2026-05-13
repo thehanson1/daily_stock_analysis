@@ -91,6 +91,8 @@ class CalibrationProfile:
     applied: bool = False
     reason: str = ""
     model_prediction: Optional[Dict[str, Any]] = None
+    strategy_id: Optional[str] = None
+    source_is_fallback: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -497,11 +499,11 @@ class AnalysisCalibrationService:
                 ).strip()
             elif (
                 model_decision["applied"]
-                and profile.source_scope == "全局"
+                and profile.source_scope in {"全局", "策略"}
                 and model_decision["confidence"] >= max(0.72, self.model_confidence_threshold + 0.08)
                 and model_decision["suggested_signal"] != profile.suggested_signal
             ):
-                profile.source_scope = "全局+学习模型"
+                profile.source_scope = f"{profile.source_scope}+学习模型"
                 profile.suggested_signal = "hold"
                 profile.score_adjustment = 0
                 profile.reason = " ".join(
@@ -985,7 +987,8 @@ class AnalysisCalibrationService:
         """
         try:
             summary = BacktestService(self.db).get_strategy_summary(strategy_id)
-        except Exception:
+        except Exception as exc:
+            logger.warning("[LearningLoop] 获取策略回测画像失败(strategy_id=%s): %s", strategy_id, exc)
             return None
 
         if summary is None:
@@ -994,10 +997,13 @@ class AnalysisCalibrationService:
         total_evals = int(summary.get("total_evaluations") or 0)
         if total_evals < self.min_samples:
             return None
+        is_fallback = bool(summary.get("is_fallback"))
+        if is_fallback:
+            return None
 
-        win_rate = float(summary.get("win_rate") or 0.5)
-        direction_accuracy = float(summary.get("direction_accuracy") or 0.5)
-        avg_return = float(summary.get("avg_return") or 0.0)
+        win_rate = _safe_ratio(summary.get("win_rate"))
+        direction_accuracy = _safe_ratio(summary.get("direction_accuracy"))
+        avg_return = _safe_ratio(summary.get("avg_return"), default=0.0)
 
         # Strategy summary is aggregated (not per-signal), so we build
         # synthetic SignalStats anchored around the current signal.
@@ -1047,6 +1053,8 @@ class AnalysisCalibrationService:
             score_adjustment=score_adjustment,
             applied=applied,
             reason=reason,
+            strategy_id=strategy_id,
+            source_is_fallback=False,
         )
         return profile
 

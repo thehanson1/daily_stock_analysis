@@ -42,6 +42,7 @@ from sqlalchemy import (
     desc,
     event,
     func,
+    inspect,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import (
@@ -78,7 +79,7 @@ class StockDaily(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     
     # 股票代码（如 600519, 000001）
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(32), nullable=False, index=True)
     
     # 交易日期
     date = Column(Date, nullable=False, index=True)
@@ -150,7 +151,7 @@ class NewsIntel(Base):
     query_id = Column(String(64), index=True)
 
     # 股票信息
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(32), nullable=False, index=True)
     name = Column(String(50))
 
     # 搜索上下文
@@ -194,7 +195,7 @@ class FundamentalSnapshot(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     query_id = Column(String(64), nullable=False, index=True)
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(32), nullable=False, index=True)
     payload = Column(Text, nullable=False)
     source_chain = Column(Text)
     coverage = Column(Text)
@@ -223,7 +224,7 @@ class AnalysisHistory(Base):
     query_id = Column(String(64), index=True)
 
     # 股票信息
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(32), nullable=False, index=True)
     name = Column(String(50))
     report_type = Column(String(16), index=True)
 
@@ -292,7 +293,7 @@ class BacktestResult(Base):
     )
 
     # 冗余字段，便于按股票筛选
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(32), nullable=False, index=True)
     analysis_date = Column(Date, index=True)
 
     # 回测参数
@@ -346,6 +347,41 @@ class BacktestResult(Base):
         ),
         Index('ix_backtest_code_date', 'code', 'analysis_date'),
     )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典，保持 API 与服务层序列化字段一致。"""
+        return {
+            "id": self.id,
+            "analysis_history_id": self.analysis_history_id,
+            "code": self.code,
+            "analysis_date": self.analysis_date.isoformat() if self.analysis_date else None,
+            "eval_window_days": self.eval_window_days,
+            "engine_version": self.engine_version,
+            "eval_status": self.eval_status,
+            "evaluated_at": self.evaluated_at.isoformat() if self.evaluated_at else None,
+            "operation_advice": self.operation_advice,
+            "position_recommendation": self.position_recommendation,
+            "strategy_id": self.strategy_id,
+            "start_price": self.start_price,
+            "end_close": self.end_close,
+            "max_high": self.max_high,
+            "min_low": self.min_low,
+            "stock_return_pct": self.stock_return_pct,
+            "direction_expected": self.direction_expected,
+            "direction_correct": self.direction_correct,
+            "outcome": self.outcome,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "hit_stop_loss": self.hit_stop_loss,
+            "hit_take_profit": self.hit_take_profit,
+            "first_hit": self.first_hit,
+            "first_hit_date": self.first_hit_date.isoformat() if self.first_hit_date else None,
+            "first_hit_trading_days": self.first_hit_trading_days,
+            "simulated_entry_price": self.simulated_entry_price,
+            "simulated_exit_price": self.simulated_exit_price,
+            "simulated_exit_reason": self.simulated_exit_reason,
+            "simulated_return_pct": self.simulated_return_pct,
+        }
 
 
 class BacktestSummary(Base):
@@ -699,6 +735,7 @@ class DatabaseManager:
         
         # 创建所有表
         Base.metadata.create_all(self._engine)
+        self._run_schema_migrations()
 
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
@@ -768,6 +805,84 @@ class DatabaseManager:
             return url_str.startswith("sqlite:")
         except Exception:
             return False
+
+    def _run_schema_migrations(self) -> None:
+        """Apply small compatibility migrations missed by SQLAlchemy create_all."""
+        additive_columns = {
+            "analysis_history": [("strategy_id", "VARCHAR(64)")],
+            "backtest_results": [("strategy_id", "VARCHAR(64)")],
+        }
+        indexes = {
+            "analysis_history": [("ix_analysis_history_strategy_id", "strategy_id")],
+            "backtest_results": [("ix_backtest_results_strategy_id", "strategy_id")],
+        }
+        code_columns = (
+            "stock_daily",
+            "news_intel",
+            "fundamental_snapshot",
+            "analysis_history",
+            "backtest_results",
+        )
+
+        with self._engine.begin() as conn:
+            inspector = inspect(conn)
+            table_names = set(inspector.get_table_names())
+            for table_name, columns in additive_columns.items():
+                if table_name not in table_names:
+                    continue
+                existing = {column["name"] for column in inspector.get_columns(table_name)}
+                for column_name, column_type in columns:
+                    if column_name in existing:
+                        continue
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                    )
+                    logger.info("数据库迁移完成: %s.%s", table_name, column_name)
+                    existing.add(column_name)
+                existing_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
+                for index_name, column_name in indexes.get(table_name, []):
+                    if index_name in existing_indexes or column_name not in existing:
+                        continue
+                    conn.exec_driver_sql(f"CREATE INDEX {index_name} ON {table_name} ({column_name})")
+                    logger.info("数据库索引迁移完成: %s", index_name)
+
+            if not self._is_sqlite_engine:
+                for table_name in code_columns:
+                    if table_name not in table_names:
+                        continue
+                    self._widen_code_column_if_needed(conn, inspector, table_name)
+
+    def _widen_code_column_if_needed(self, conn: Any, inspector: Any, table_name: str) -> None:
+        """Widen legacy code columns for SQL databases that enforce varchar length."""
+        code_column = next(
+            (column for column in inspector.get_columns(table_name) if column["name"] == "code"),
+            None,
+        )
+        if not code_column:
+            return
+
+        length = getattr(code_column.get("type"), "length", None)
+        if length is None or int(length) >= 32:
+            return
+
+        dialect = self._engine.dialect.name
+        nullable_sql = "NULL" if code_column.get("nullable", True) else "NOT NULL"
+        if dialect in {"postgresql", "postgres"}:
+            ddl = f"ALTER TABLE {table_name} ALTER COLUMN code TYPE VARCHAR(32)"
+        elif dialect in {"mysql", "mariadb"}:
+            ddl = f"ALTER TABLE {table_name} MODIFY COLUMN code VARCHAR(32) {nullable_sql}"
+        elif dialect in {"mssql"}:
+            ddl = f"ALTER TABLE {table_name} ALTER COLUMN code VARCHAR(32) {nullable_sql}"
+        else:
+            logger.warning(
+                "数据库方言 %s 暂不支持自动扩展 %s.code 列长度，请手动迁移到 VARCHAR(32)",
+                dialect,
+                table_name,
+            )
+            return
+
+        conn.exec_driver_sql(ddl)
+        logger.info("数据库列长度迁移完成: %s.code VARCHAR(%s) -> VARCHAR(32)", table_name, length)
 
     @staticmethod
     def _is_retryable_sqlite_error(exc: Exception) -> bool:
@@ -1153,7 +1268,9 @@ class DatabaseManager:
         raw_result = self._build_raw_result(result)
         context_text = None
         if save_snapshot and context_snapshot is not None:
-            context_text = self._safe_json_dumps(context_snapshot)
+            context_text = self._safe_json_dumps(
+                self._filter_persisted_result_meta(context_snapshot)
+            )
 
         record = AnalysisHistory(
             query_id=query_id,
@@ -1658,11 +1775,60 @@ class DatabaseManager:
         生成完整分析结果字典
         """
         data = result.to_dict() if hasattr(result, "to_dict") else {}
-        data.update({
-            'data_sources': getattr(result, 'data_sources', ''),
-            'raw_response': getattr(result, 'raw_response', None),
-        })
+        if not isinstance(data, dict):
+            data = {}
+        data = DatabaseManager._filter_persisted_result_meta(data)
+        data["data_sources"] = getattr(result, "data_sources", "")
         return data
+
+    @staticmethod
+    def _filter_persisted_result_meta(data: Any) -> Any:
+        """Keep history payload useful while recursively dropping sensitive runtime meta."""
+        blocked_keys = {
+            "raw_response",
+            "raw",
+            "prompt",
+            "raw_prompt",
+            "system_prompt",
+            "user_prompt",
+            "messages",
+            "tool_calls_log",
+            "conversation_history",
+            "api_key",
+            "api_keys",
+            "access_token",
+            "authorization",
+            "proxy_authorization",
+            "headers",
+            "cookie",
+            "set_cookie",
+            "password",
+            "secret",
+            "credentials",
+        }
+        blocked_suffixes = (
+            "_api_key",
+            "_api_keys",
+            "_token",
+            "_secret",
+            "_password",
+            "_credentials",
+        )
+
+        if isinstance(data, list):
+            return [DatabaseManager._filter_persisted_result_meta(item) for item in data]
+        if isinstance(data, tuple):
+            return [DatabaseManager._filter_persisted_result_meta(item) for item in data]
+        if not isinstance(data, dict):
+            return data
+
+        filtered: Dict[str, Any] = {}
+        for key, value in data.items():
+            normalized_key = str(key).lower()
+            if normalized_key in blocked_keys or normalized_key.endswith(blocked_suffixes):
+                continue
+            filtered[key] = DatabaseManager._filter_persisted_result_meta(value)
+        return filtered
 
     @staticmethod
     def _parse_sniper_value(value: Any) -> Optional[float]:

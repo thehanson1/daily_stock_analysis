@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] DEPLOY.md 和 deploy-webui-cloud.md 新增"UI 元素异常变大/布局错乱"排查步骤（重建 Docker 镜像或手动执行 npm run build）
 - [修复] 报告完整性校验新增 `ideal_buy` / `secondary_buy` 非空与差异性检查，避免理想买入点与二次买入点重复时仍被判定为有效输出。
 - [修复] 飞书发送链路新增 HTTP 429 与限流错误码的专项退避重试，补齐限流场景下的基础恢复能力。
+- [修复] 学习校准与策略回测语义补齐策略字段序列化、策略级汇总、SQLite 轻量迁移、历史元数据过滤和 ML/策略冲突处理，避免策略画像遮蔽学习模型判断。
 
 - [修复] 启动早期失败（如配置加载异常）时 `python main.py` 现在通过 stderr 暴露真实根因，bootstrap 阶段不再向硬编码 `logs/` 目录写入文件日志，文件日志推迟到 `config.log_dir` 可用后创建，避免健康启动在非预期路径残留日志文件
 - [修复] 🐳 **Docker WebUI 运行时优先复用预构建静态资源** — `prepare_webui_frontend_assets()` 现在会先检查镜像内已有的 `static/index.html` 是否可直接复用；当容器运行时不包含 `apps/dsa-web` 源码目录且未安装 `npm` 时，也不会误报“未找到前端项目，无法自动构建”，从而恢复 Docker 部署后的 WebUI 打开能力。

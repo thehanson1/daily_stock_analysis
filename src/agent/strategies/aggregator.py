@@ -91,6 +91,11 @@ class StrategyAggregator:
             weights.append(w)
 
         total_weight = sum(weights) or 1.0
+        primary_opinion = max(
+            zip(strategy_opinions, weights),
+            key=lambda item: (item[1], item[0].confidence),
+        )[0]
+        primary_strategy_id = primary_opinion.agent_name.replace("strategy_", "")
 
         # Weighted signal score
         weighted_score = sum(
@@ -137,6 +142,11 @@ class StrategyAggregator:
                 "weighted_score": round(weighted_score, 2),
                 "total_adjustment": total_adjustment,
                 "strategy_count": len(strategy_opinions),
+                "primary_strategy_id": primary_strategy_id,
+                "strategy_weights": {
+                    op.agent_name.replace("strategy_", ""): round(w, 4)
+                    for op, w in zip(strategy_opinions, weights)
+                },
                 "individual_signals": {
                     op.agent_name: {"signal": op.signal, "confidence": op.confidence}
                     for op in strategy_opinions
@@ -183,8 +193,8 @@ class StrategyAggregator:
                 win_rate = summary.get("win_rate", 0.5)
                 # Range: 0.5 (0% win) to 1.5 (100% win)
                 return 0.5 + win_rate
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[StrategyAggregator] strategy backtest lookup failed for %s: %s", strategy_id, exc)
         return 1.0  # neutral factor
 
     @staticmethod
@@ -194,5 +204,6 @@ class StrategyAggregator:
             from src.config import get_config
             config = get_config()
             return getattr(config, "agent_strategy_autoweight", True)
-        except Exception:
+        except Exception as exc:
+            logger.debug("[StrategyAggregator] failed to read agent_strategy_autoweight: %s", exc)
             return True

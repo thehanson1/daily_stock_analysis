@@ -121,7 +121,8 @@ class StrategyRouter:
             from src.config import get_config
             config = get_config()
             return getattr(config, "agent_strategy_routing", "auto")
-        except Exception:
+        except Exception as exc:
+            logger.debug("[StrategyRouter] failed to read routing mode: %s", exc)
             return "auto"
 
     @staticmethod
@@ -139,7 +140,8 @@ class StrategyRouter:
             from src.agent.factory import get_skill_manager
             sm = get_skill_manager()
             return {s.name for s in sm.list_skills()}
-        except Exception:
+        except Exception as exc:
+            logger.debug("[StrategyRouter] failed to list available strategies: %s", exc)
             return set(_DEFAULT_STRATEGIES)
 
     @classmethod
@@ -154,7 +156,8 @@ class StrategyRouter:
                 for strategy_id in getattr(config, "agent_skills", []) or []
                 if isinstance(strategy_id, str) and strategy_id
             ]
-        except Exception:
+        except Exception as exc:
+            logger.debug("[StrategyRouter] failed to read manual strategies: %s", exc)
             configured = []
 
         available = cls._get_available_ids()

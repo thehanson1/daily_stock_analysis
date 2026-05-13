@@ -356,6 +356,19 @@ class TestStrategyAggregator(unittest.TestCase):
         # Average of buy(4) + sell(2) = 3.0, which maps to "hold"
         self.assertEqual(result.signal, "hold")
 
+    def test_primary_strategy_uses_weighted_contribution(self):
+        from src.agent.strategies.aggregator import StrategyAggregator
+        agg = StrategyAggregator()
+        ctx = AgentContext()
+        ctx.add_opinion(AgentOpinion(agent_name="strategy_low", signal="buy", confidence=0.4))
+        ctx.add_opinion(AgentOpinion(agent_name="strategy_high", signal="hold", confidence=0.9))
+
+        result = agg.aggregate(ctx)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.raw_data.get("primary_strategy_id"), "high")
+        self.assertIn("strategy_weights", result.raw_data)
+
 
 # ============================================================
 # PortfolioAgent.post_process

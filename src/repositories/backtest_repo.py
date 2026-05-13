@@ -201,7 +201,7 @@ class BacktestRepository:
 
         try:
             payload = json.loads(context_snapshot)
-        except Exception:
+        except (TypeError, json.JSONDecodeError):
             return None
 
         if not isinstance(payload, dict):
@@ -217,5 +217,5 @@ class BacktestRepository:
 
         try:
             return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
-        except Exception:
+        except (TypeError, ValueError):
             return None

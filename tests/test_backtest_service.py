@@ -44,6 +44,7 @@ class BacktestServiceTestCase(unittest.TestCase):
                     analysis_summary="test",
                     stop_loss=95.0,
                     take_profit=110.0,
+                    strategy_id="bull_trend",
                     created_at=old_created_at,
                     context_snapshot='{"enhanced_context": {"date": "2024-01-01"}}',
                 )
@@ -64,9 +65,9 @@ class BacktestServiceTestCase(unittest.TestCase):
             # Forward bars (3 days) that hit take-profit on day1
             session.add_all(
                 [
-                    StockDaily(code="600519", date=date(2024, 1, 2), high=111.0, low=100.0, close=105.0),
-                    StockDaily(code="600519", date=date(2024, 1, 3), high=108.0, low=103.0, close=106.0),
-                    StockDaily(code="600519", date=date(2024, 1, 4), high=109.0, low=104.0, close=107.0),
+                    StockDaily(code="600519", date=date(2024, 1, 2), open=100.0, high=111.0, low=100.0, close=105.0),
+                    StockDaily(code="600519", date=date(2024, 1, 3), open=105.0, high=108.0, low=103.0, close=106.0),
+                    StockDaily(code="600519", date=date(2024, 1, 4), open=106.0, high=109.0, low=104.0, close=107.0),
                 ]
             )
             session.commit()
@@ -195,8 +196,15 @@ class BacktestServiceTestCase(unittest.TestCase):
 
         self.assertIsNotNone(strategy_summary)
         self.assertEqual(strategy_summary["strategy_id"], "bull_trend")
-        self.assertEqual(strategy_summary["source_scope"], "overall")
+        self.assertEqual(strategy_summary["source_scope"], "strategy")
+        self.assertFalse(strategy_summary["is_fallback"])
         self.assertAlmostEqual(strategy_summary["win_rate"], 1.0)
+
+        fallback_summary = service.get_strategy_summary("new_strategy", eval_window_days=3)
+        self.assertIsNotNone(fallback_summary)
+        self.assertEqual(fallback_summary["strategy_id"], "new_strategy")
+        self.assertEqual(fallback_summary["source_scope"], "overall")
+        self.assertTrue(fallback_summary["is_fallback"])
 
     def test_get_recent_evaluations(self) -> None:
         """Verify get_recent_evaluations returns correct paginated results."""
@@ -241,9 +249,9 @@ class BacktestServiceTestCase(unittest.TestCase):
                 StockDaily(code="000001", date=date(2024, 1, 1), open=10.0, high=10.2, low=9.8, close=10.0)
             )
             session.add_all([
-                StockDaily(code="000001", date=date(2024, 1, 2), high=10.0, low=9.5, close=9.6),
-                StockDaily(code="000001", date=date(2024, 1, 3), high=9.7, low=9.3, close=9.4),
-                StockDaily(code="000001", date=date(2024, 1, 4), high=9.5, low=9.0, close=9.1),
+                StockDaily(code="000001", date=date(2024, 1, 2), open=10.0, high=10.0, low=9.5, close=9.6),
+                StockDaily(code="000001", date=date(2024, 1, 3), open=9.6, high=9.7, low=9.3, close=9.4),
+                StockDaily(code="000001", date=date(2024, 1, 4), open=9.4, high=9.5, low=9.0, close=9.1),
             ])
             session.commit()
 

@@ -544,7 +544,10 @@ class AgentOrchestrator:
                     "confidence": consensus.confidence,
                     "reasoning": consensus.reasoning,
                     "strategy_ids": strategy_ids,
-                    "primary_strategy_id": strategy_ids[0] if strategy_ids else None,
+                    "primary_strategy_id": (
+                        (consensus.raw_data or {}).get("primary_strategy_id")
+                        or (strategy_ids[0] if strategy_ids else None)
+                    ),
                 })
                 logger.info(
                     "[Orchestrator] strategy consensus: signal=%s confidence=%.2f",

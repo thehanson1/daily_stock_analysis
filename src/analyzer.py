@@ -873,6 +873,8 @@ class AnalysisResult:
             'change_pct': self.change_pct,
             'model_used': self.model_used,
             'calibration_info': self.calibration_info,
+            'query_id': self.query_id,
+            'strategy_id': self.strategy_id,
         }
 
     def get_core_conclusion(self) -> str:

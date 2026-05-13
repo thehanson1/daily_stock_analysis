@@ -366,6 +366,112 @@ class AnalysisCalibrationServiceTestCase(unittest.TestCase):
         self.assertEqual(calibrated.trend_prediction, "震荡偏多")
         self.assertTrue(52 <= calibrated.sentiment_score <= 59)
 
+    def test_strategy_profile_conflict_does_not_short_circuit_ml(self) -> None:
+        service = AnalysisCalibrationService(db_manager=self.db, config=self.config)
+
+        class FakePrediction:
+            predicted_signal = "sell"
+            confidence = 0.9
+            sample_count = 80
+            validation_accuracy = None
+            validation_count = 0
+            baseline_accuracy = None
+            engine = "hist_gradient_boosting"
+            scope = "us"
+            validation_metrics = None
+
+            def to_dict(self) -> dict:
+                return {
+                    "predicted_signal": self.predicted_signal,
+                    "confidence": self.confidence,
+                    "probabilities": {"sell": self.confidence, "buy": 0.1},
+                    "sample_count": self.sample_count,
+                    "engine": self.engine,
+                    "scope": self.scope,
+                }
+
+        class FakeModel:
+            validation_accuracy = None
+            validation_count = 0
+            baseline_accuracy = None
+
+            def predict(self, features, *, scope_hint=None):
+                return FakePrediction()
+
+        service._small_model = FakeModel()
+
+        with patch(
+            "src.services.analysis_calibration_service.BacktestService.get_strategy_summary",
+            return_value={
+                "strategy_id": "bull_trend",
+                "source_scope": "strategy",
+                "is_fallback": False,
+                "total_evaluations": 30,
+                "win_rate": 0.8,
+                "direction_accuracy": 0.8,
+                "avg_return": 0.05,
+            },
+        ):
+            profile = service._build_profile(
+                stock_code="AAPL",
+                current_signal="buy",
+                model_used="gemini/gemini-2.5-flash",
+                score=62,
+                trend_prediction="看多",
+                context_snapshot=self._make_context_snapshot(market="us", signal="buy"),
+                strategy_id="bull_trend",
+            )
+
+        self.assertTrue(profile.applied)
+        self.assertEqual(profile.suggested_signal, "hold")
+        self.assertEqual(profile.source_scope, "策略+学习模型")
+        self.assertIsNotNone(profile.model_prediction)
+
+    def test_strategy_fallback_summary_does_not_short_circuit_heuristic_profile(self) -> None:
+        self.config.analysis_learning_model_enabled = False
+        service = AnalysisCalibrationService(db_manager=self.db, config=self.config)
+        rows = [
+            {
+                "code": code,
+                "market": "us",
+                "model_used": "gemini/gemini-2.5-flash",
+                "signal": "buy",
+                "direction_correct": False,
+                "simulated_return_pct": -5.0,
+                "stock_return_pct": -5.0,
+                "evaluated_at_ts": idx,
+                "context_payload": {},
+            }
+            for idx, code in enumerate(("AAPL", "MSFT", "NVDA"), start=1)
+        ]
+
+        with patch(
+            "src.services.analysis_calibration_service.BacktestService.get_strategy_summary",
+            return_value={
+                "strategy_id": "new_strategy",
+                "source_scope": "overall",
+                "is_fallback": True,
+                "total_evaluations": 50,
+                "win_rate": 0.9,
+                "direction_accuracy": 0.9,
+                "avg_return": 0.1,
+            },
+        ), patch.object(service, "_load_learning_rows", return_value=rows):
+            profile = service._build_profile(
+                stock_code="AAPL",
+                current_signal="buy",
+                model_used="gemini/gemini-2.5-flash",
+                score=62,
+                trend_prediction="看多",
+                context_snapshot=self._make_context_snapshot(market="us", signal="buy"),
+                strategy_id="new_strategy",
+            )
+
+        self.assertTrue(profile.applied)
+        self.assertEqual(profile.suggested_signal, "hold")
+        self.assertEqual(profile.source_scope, "市场+模型")
+        self.assertIsNone(profile.strategy_id)
+
 
 class PipelineLearningLoopTestCase(unittest.TestCase):
     @patch("src.core.pipeline.get_market_today", return_value=date(2026, 3, 24))
