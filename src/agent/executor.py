@@ -47,6 +47,7 @@ class AgentResult:
     provider: str = ""
     model: str = ""                            # comma-separated models used (supports fallback)
     error: Optional[str] = None
+    strategy_id: Optional[str] = None          # primary strategy ID from orchestrator
 
 
 # ============================================================

@@ -650,6 +650,7 @@ class Config:
     backtest_min_age_days: int = 14
     backtest_engine_version: str = "v1"
     backtest_neutral_band_pct: float = 2.0
+    backtest_entry_mode: str = "next_open"
     analysis_learning_refresh_interval_minutes: int = 60
     analysis_learning_min_samples: int = 20
     analysis_learning_history_limit: int = 800
@@ -1242,6 +1243,7 @@ class Config:
             backtest_min_age_days=int(os.getenv('BACKTEST_MIN_AGE_DAYS', '14')),
             backtest_engine_version=os.getenv('BACKTEST_ENGINE_VERSION', 'v1'),
             backtest_neutral_band_pct=float(os.getenv('BACKTEST_NEUTRAL_BAND_PCT', '2.0')),
+            backtest_entry_mode=os.getenv('BACKTEST_ENTRY_MODE', 'next_open').strip().lower() or 'next_open',
             analysis_learning_refresh_interval_minutes=max(1, int(os.getenv('ANALYSIS_LEARNING_REFRESH_INTERVAL_MINUTES', '60'))),
             analysis_learning_min_samples=max(3, int(os.getenv('ANALYSIS_LEARNING_MIN_SAMPLES', '20'))),
             analysis_learning_history_limit=max(50, int(os.getenv('ANALYSIS_LEARNING_HISTORY_LIMIT', '800'))),

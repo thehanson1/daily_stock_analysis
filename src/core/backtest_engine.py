@@ -19,6 +19,7 @@ class DailyBarLike(Protocol):
     """Protocol for objects representing a daily OHLC bar."""
 
     date: date
+    open: Optional[float]
     high: Optional[float]
     low: Optional[float]
     close: Optional[float]
@@ -45,6 +46,7 @@ class EvaluationConfig:
     eval_window_days: int
     neutral_band_pct: float = 2.0
     engine_version: str = "v1"
+    entry_mode: str = "next_open"
 
 
 class BacktestEngine:
@@ -159,17 +161,40 @@ class BacktestEngine:
             }
 
         window_bars = list(forward_bars[:eval_days])
+        entry_mode = cls._normalize_entry_mode(config.entry_mode)
+        entry_price = cls._resolve_entry_price(
+            entry_mode=entry_mode,
+            analysis_close=start_price,
+            window_bars=window_bars,
+        )
+        if entry_price is None or entry_price <= 0:
+            return {
+                "analysis_date": analysis_date,
+                "operation_advice": operation_advice,
+                "position_recommendation": cls.infer_position_recommendation(operation_advice),
+                "direction_expected": cls.infer_direction_expected(operation_advice),
+                "eval_status": "insufficient_data",
+                "eval_window_days": eval_days,
+                "entry_mode": entry_mode,
+            }
+
         end_close = window_bars[-1].close
         highs = [b.high for b in window_bars if b.high is not None]
         lows = [b.low for b in window_bars if b.low is not None]
         max_high = max(highs) if highs else None
         min_low = min(lows) if lows else None
 
+        stop_loss, take_profit = cls._sanitize_long_targets(
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+
         stock_return_pct: Optional[float]
         if end_close is None:
             stock_return_pct = None
         else:
-            stock_return_pct = (end_close - start_price) / start_price * 100
+            stock_return_pct = (end_close - entry_price) / entry_price * 100
 
         direction_expected = cls.infer_direction_expected(operation_advice)
         position = cls.infer_position_recommendation(operation_advice)
@@ -196,14 +221,14 @@ class BacktestEngine:
             end_close=end_close,
         )
 
-        simulated_entry_price = start_price if position == "long" else None
+        simulated_entry_price = entry_price if position == "long" else None
         simulated_return_pct: Optional[float]
         if position != "long":
             simulated_return_pct = 0.0
         elif simulated_exit_price is None:
             simulated_return_pct = None
         else:
-            simulated_return_pct = (simulated_exit_price - start_price) / start_price * 100
+            simulated_return_pct = (simulated_exit_price - entry_price) / entry_price * 100
 
         return {
             "analysis_date": analysis_date,
@@ -212,7 +237,7 @@ class BacktestEngine:
             "eval_status": "completed",
             "operation_advice": operation_advice,
             "position_recommendation": position,
-            "start_price": start_price,
+            "start_price": entry_price,
             "end_close": end_close,
             "max_high": max_high,
             "min_low": min_low,
@@ -378,6 +403,57 @@ class BacktestEngine:
         """Check if the prefix text ends with a negation pattern."""
         stripped = prefix.rstrip()
         return any(stripped.endswith(neg) for neg in cls._NEGATION_PATTERNS)
+
+    @staticmethod
+    def _normalize_entry_mode(entry_mode: Optional[str]) -> str:
+        mode = str(entry_mode or "next_open").strip().lower()
+        if mode in {"analysis_close", "same_close", "close"}:
+            return "analysis_close"
+        if mode in {"next_close", "forward_close"}:
+            return "next_close"
+        return "next_open"
+
+    @staticmethod
+    def _resolve_entry_price(
+        *,
+        entry_mode: str,
+        analysis_close: float,
+        window_bars: Sequence[DailyBarLike],
+    ) -> Optional[float]:
+        if entry_mode == "analysis_close":
+            return float(analysis_close) if analysis_close and analysis_close > 0 else None
+        if not window_bars:
+            return None
+        first_bar = window_bars[0]
+        if entry_mode == "next_close":
+            return float(first_bar.close) if first_bar.close and first_bar.close > 0 else None
+        return float(first_bar.open) if first_bar.open and first_bar.open > 0 else None
+
+    @staticmethod
+    def _sanitize_long_targets(
+        *,
+        entry_price: float,
+        stop_loss: Optional[float],
+        take_profit: Optional[float],
+    ) -> tuple[Optional[float], Optional[float]]:
+        if entry_price is None or entry_price <= 0:
+            return None, None
+
+        clean_stop_loss: Optional[float] = None
+        clean_take_profit: Optional[float] = None
+
+        if stop_loss is not None:
+            value = float(stop_loss)
+            if 0 < value < entry_price:
+                clean_stop_loss = value
+
+        if take_profit is not None:
+            value = float(take_profit)
+            if value > entry_price:
+                clean_take_profit = value
+
+        return clean_stop_loss, clean_take_profit
+
 
     @classmethod
     def _classify_outcome(

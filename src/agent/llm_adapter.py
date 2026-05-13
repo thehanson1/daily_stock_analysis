@@ -64,6 +64,12 @@ _AUTO_THINKING_MODELS: List[str] = ["deepseek-reasoner", "deepseek-r1", "qwq"]
 # Models that need explicit opt-in via extra_body; payload decoupled from model name.
 _OPT_IN_THINKING_MODELS: Dict[str, dict] = {
     "deepseek-chat": {"thinking": {"type": "enabled"}},
+    "deepseek-v4-pro": {"thinking": {"type": "enabled"}},
+}
+
+# Models that require a top-level reasoning_effort parameter.
+_REASONING_EFFORT_MODELS: Dict[str, str] = {
+    "deepseek-v4-pro": "high",
 }
 
 # Custom model pricing for models not in LiteLLM's built-in price list
@@ -130,13 +136,26 @@ def get_thinking_extra_body(model: str) -> Optional[dict]:
       These models automatically return reasoning_content in API responses; sending
       extra_body would cause 400 because the API already enables thinking by default.
       Return None to avoid duplicate activation.
-    - Opt-in models (_OPT_IN_THINKING_MODELS: deepseek-chat): Return the activation
-      payload to explicitly enable thinking mode.
+    - Opt-in models (_OPT_IN_THINKING_MODELS: deepseek-chat, deepseek-v4-pro): Return
+      the activation payload to explicitly enable thinking mode.
+    - Some opt-in models (e.g. deepseek-v4-pro) also require a top-level
+      reasoning_effort; use get_reasoning_effort() for that.
     - All other models: Return None (no thinking mode).
     """
     if _model_matches(model, _AUTO_THINKING_MODELS):
         return None
     return _get_opt_in_payload(model, _OPT_IN_THINKING_MODELS)
+
+
+def get_reasoning_effort(model: str) -> Optional[str]:
+    """Return top-level reasoning_effort for models that require it."""
+    if not model:
+        return None
+    m = model.lower().strip()
+    for key, effort in _REASONING_EFFORT_MODELS.items():
+        if m == key or m.startswith(key + "-"):
+            return effort
+    return None
 
 
 # ============================================================
@@ -473,6 +492,9 @@ class LLMToolAdapter:
         extra = get_thinking_extra_body(model_short)
         if extra:
             call_kwargs["extra_body"] = extra
+        reasoning_effort = get_reasoning_effort(model_short)
+        if reasoning_effort:
+            call_kwargs["reasoning_effort"] = reasoning_effort
 
         if tools:
             call_kwargs["tools"] = tools

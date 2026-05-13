@@ -52,6 +52,7 @@ export interface BacktestResultItem {
   simulatedExitPrice?: number;
   simulatedExitReason?: string;
   simulatedReturnPct?: number;
+  strategyId?: string;
 }
 
 export interface BacktestResultsResponse {

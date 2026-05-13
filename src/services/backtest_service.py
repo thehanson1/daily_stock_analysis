@@ -14,6 +14,7 @@ from src.config import get_config
 from src.core.backtest_engine import OVERALL_SENTINEL_CODE, BacktestEngine, EvaluationConfig
 from src.repositories.backtest_repo import BacktestRepository
 from src.repositories.stock_repo import StockRepository
+from src.services.analysis_calibration_model import SmallCalibrationModel
 from src.storage import BacktestResult, BacktestSummary, DatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class BacktestService:
                             eval_status="error",
                             evaluated_at=datetime.now(),
                             operation_advice=analysis.operation_advice,
+                            strategy_id=getattr(analysis, 'strategy_id', None),
                         )
                     )
                     continue
@@ -107,6 +109,7 @@ class BacktestService:
                             eval_status="insufficient_data",
                             evaluated_at=datetime.now(),
                             operation_advice=analysis.operation_advice,
+                            strategy_id=getattr(analysis, 'strategy_id', None),
                         )
                     )
                     continue
@@ -173,6 +176,7 @@ class BacktestService:
                         simulated_exit_price=evaluation.get("simulated_exit_price"),
                         simulated_exit_reason=evaluation.get("simulated_exit_reason"),
                         simulated_return_pct=evaluation.get("simulated_return_pct"),
+                        strategy_id=getattr(analysis, 'strategy_id', None),
                     )
                 )
 
@@ -189,6 +193,7 @@ class BacktestService:
                         eval_status="error",
                         evaluated_at=datetime.now(),
                         operation_advice=analysis.operation_advice,
+                        strategy_id=getattr(analysis, 'strategy_id', None),
                     )
                 )
 
@@ -244,20 +249,17 @@ class BacktestService:
         )
 
     def get_strategy_summary(self, strategy_id: str, *, eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Return strategy-like summary metrics for Agent memory consumers.
+        """Return real strategy-level backtest summary metrics.
 
-        The current backtest storage layer only persists overall / per-stock rollups.
-        Until strategy-tagged backtest summaries are available, use the overall rollup
-        so memory and calibration features can still consume real historical metrics.
+        Queries pre-computed strategy-dimension summaries from the backtest
+        storage layer. Falls back to the overall rollup when no strategy
+        summary has been accumulated yet (e.g. new strategy with no history).
         """
-        summary = self.get_global_summary(eval_window_days=eval_window_days)
-        if summary is None:
-            return None
-
-        normalized = dict(summary)
-        normalized["strategy_id"] = strategy_id
-        normalized["source_scope"] = summary.get("scope", "overall")
-        return normalized
+        summary = self.get_summary(scope="strategy", code=strategy_id, eval_window_days=eval_window_days)
+        if summary is not None:
+            return self._normalize_learning_summary(summary)
+        # fallback: overall summary as safe default for strategies without history
+        return self.get_global_summary(eval_window_days=eval_window_days)
 
     def _resolve_analysis_date(self, analysis) -> Optional[date]:
         parsed = self.repo.parse_analysis_date_from_snapshot(analysis.context_snapshot)
@@ -417,6 +419,55 @@ class BacktestService:
             "avg_days_to_first_hit": row.avg_days_to_first_hit,
             "advice_breakdown": json.loads(row.advice_breakdown_json) if row.advice_breakdown_json else {},
             "diagnostics": json.loads(row.diagnostics_json) if row.diagnostics_json else {},
+            "learning_model": BacktestService._learning_model_metrics(),
+        }
+
+    @staticmethod
+    def _learning_model_metrics() -> Dict[str, Any]:
+        """Expose persisted learning calibration model metrics with backtest summaries."""
+        config = get_config()
+        if not bool(getattr(config, "analysis_learning_model_enabled", True)):
+            return {"enabled": False}
+
+        model_path = str(
+            getattr(
+                config,
+                "analysis_learning_model_path",
+                "./data/models/analysis_calibration_model.json",
+            )
+        )
+        model = SmallCalibrationModel.load(model_path)
+        if model is None:
+            return {
+                "enabled": True,
+                "available": False,
+                "path": model_path,
+            }
+
+        return {
+            "enabled": True,
+            "available": True,
+            "path": model_path,
+            "sample_count": model.sample_count,
+            "validation_accuracy": model.validation_accuracy,
+            "validation_count": model.validation_count,
+            "validation_metrics": model.validation_metrics,
+            "label_distribution": model.label_distribution,
+            "baseline_accuracy": model.baseline_accuracy,
+            "backend": model.preferred_backend,
+            "scopes": sorted(model.submodels.keys()),
+            "scope_metrics": {
+                scope: {
+                    "sample_count": submodel.get("sample_count"),
+                    "validation_accuracy": submodel.get("validation_accuracy"),
+                    "validation_count": submodel.get("validation_count"),
+                    "validation_metrics": submodel.get("validation_metrics"),
+                    "label_distribution": submodel.get("label_distribution"),
+                    "baseline_accuracy": submodel.get("baseline_accuracy"),
+                    "engine": submodel.get("engine"),
+                }
+                for scope, submodel in model.submodels.items()
+            },
         }
 
     @staticmethod

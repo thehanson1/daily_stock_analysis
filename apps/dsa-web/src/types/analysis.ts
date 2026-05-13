@@ -33,6 +33,7 @@ export interface ReportMeta {
   currentPrice?: number;
   changePct?: number;
   modelUsed?: string;  // LLM model used for analysis
+  strategyId?: string;  // primary strategy ID from multi-strategy orchestrator
 }
 
 /** Sentiment label */

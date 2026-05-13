@@ -65,6 +65,7 @@ class OrchestratorResult:
     model: str = ""
     error: Optional[str] = None
     stats: Optional[AgentRunStats] = None
+    primary_strategy_id: Optional[str] = None  # selected primary strategy ID
 
 
 class AgentOrchestrator:
@@ -188,6 +189,7 @@ class AgentOrchestrator:
             provider=orch_result.provider,
             model=orch_result.model,
             error=orch_result.error,
+            strategy_id=orch_result.primary_strategy_id,
         )
 
     def chat(
@@ -243,6 +245,7 @@ class AgentOrchestrator:
             provider=orch_result.provider,
             model=orch_result.model,
             error=orch_result.error,
+            strategy_id=orch_result.primary_strategy_id,
         )
 
     # -----------------------------------------------------------------
@@ -411,6 +414,10 @@ class AgentOrchestrator:
 
         dashboard, content = self._resolve_final_output(ctx, parse_dashboard=parse_dashboard)
 
+        # Extract primary strategy ID from context
+        strategy_consensus = ctx.data.get("strategy_consensus", {}) if ctx.data else {}
+        primary_strategy_id: Optional[str] = strategy_consensus.get("primary_strategy_id")
+
         model_str = ", ".join(dict.fromkeys(m for m in models_used if m))
         provider = stats.models_used[0] if stats.models_used else ""
 
@@ -426,6 +433,7 @@ class AgentOrchestrator:
                 model=model_str,
                 error="Failed to parse dashboard JSON from agent response",
                 stats=stats,
+                primary_strategy_id=primary_strategy_id,
             )
 
         return OrchestratorResult(
@@ -438,6 +446,7 @@ class AgentOrchestrator:
             provider=provider,
             model=model_str,
             stats=stats,
+            primary_strategy_id=primary_strategy_id,
         )
 
     # -----------------------------------------------------------------
@@ -496,6 +505,9 @@ class AgentOrchestrator:
             if not selected:
                 return []
 
+            # Persist selected strategy_ids so downstream pipeline stages can use them
+            ctx.meta["selected_strategy_ids"] = selected
+
             from src.agent.strategies.strategy_agent import StrategyAgent
             agents = []
             for strategy_id in selected[:3]:  # cap at 3 concurrent strategies
@@ -525,10 +537,14 @@ class AgentOrchestrator:
             consensus = aggregator.aggregate(ctx)
             if consensus:
                 ctx.opinions.append(consensus)
+                # Collect strategy_ids from context meta (set by _build_strategy_agents)
+                strategy_ids = ctx.meta.get("selected_strategy_ids", [])
                 ctx.set_data("strategy_consensus", {
                     "signal": consensus.signal,
                     "confidence": consensus.confidence,
                     "reasoning": consensus.reasoning,
+                    "strategy_ids": strategy_ids,
+                    "primary_strategy_id": strategy_ids[0] if strategy_ids else None,
                 })
                 logger.info(
                     "[Orchestrator] strategy consensus: signal=%s confidence=%.2f",

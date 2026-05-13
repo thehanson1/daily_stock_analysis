@@ -835,6 +835,7 @@ class AnalysisResult:
     # ========== 历史对比（Report Engine P0）==========
     query_id: Optional[str] = None  # 本次分析 query_id，用于历史对比时排除本次记录
     calibration_info: Optional[Dict[str, Any]] = None  # 回测校准/进化信息（如有）
+    strategy_id: Optional[str] = None  # 主策略 ID（来自多策略编排器）
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""

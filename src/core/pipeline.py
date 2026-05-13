@@ -545,7 +545,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=news_context,
                         context_snapshot=context_snapshot,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        strategy_id=None,
                     )
                 except Exception as e:
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
@@ -899,7 +900,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=None,
                         context_snapshot=initial_context,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        strategy_id=result.strategy_id,
                     )
                 except Exception as e:
                     logger.warning(f"[{code}] 保存 Agent 分析历史失败: {e}")
@@ -927,6 +929,7 @@ class StockAnalysisPipeline:
             error_message=agent_result.error or None,
             data_sources=f"agent:{agent_result.provider}",
             model_used=agent_result.model or None,
+            strategy_id=getattr(agent_result, 'strategy_id', None),
         )
 
         if agent_result.success and agent_result.dashboard:

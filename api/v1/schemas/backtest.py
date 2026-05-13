@@ -53,6 +53,7 @@ class BacktestResultItem(BaseModel):
     simulated_exit_price: Optional[float] = None
     simulated_exit_reason: Optional[str] = None
     simulated_return_pct: Optional[float] = None
+    strategy_id: Optional[str] = None
 
 
 class BacktestResultsResponse(BaseModel):
@@ -91,4 +92,5 @@ class PerformanceMetrics(BaseModel):
 
     advice_breakdown: Dict[str, Any] = Field(default_factory=dict)
     diagnostics: Dict[str, Any] = Field(default_factory=dict)
+    learning_model: Dict[str, Any] = Field(default_factory=dict)
 

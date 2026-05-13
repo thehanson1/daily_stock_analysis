@@ -162,6 +162,8 @@ class AnalysisCalibrationService:
         ).strip().lower()
         if backend in {"tree", "auto", "hist_gradient_boosting"}:
             return "tree"
+        if backend in {"logistic", "logistic_regression", "lr"}:
+            return "logistic_regression"
         if backend in {"naive_bayes", "nb"}:
             return "naive_bayes"
         return "tree"
@@ -311,9 +313,23 @@ class AnalysisCalibrationService:
             "success": True,
             "sample_count": model.sample_count,
             "validation_accuracy": model.validation_accuracy,
+            "validation_metrics": model.validation_metrics,
+            "label_distribution": model.label_distribution,
             "baseline_accuracy": model.baseline_accuracy,
             "backend": model.preferred_backend,
             "scopes": trained_scopes,
+            "scope_metrics": {
+                scope: {
+                    "sample_count": submodel.get("sample_count"),
+                    "validation_accuracy": submodel.get("validation_accuracy"),
+                    "validation_count": submodel.get("validation_count"),
+                    "validation_metrics": submodel.get("validation_metrics"),
+                    "label_distribution": submodel.get("label_distribution"),
+                    "baseline_accuracy": submodel.get("baseline_accuracy"),
+                    "engine": submodel.get("engine"),
+                }
+                for scope, submodel in model.submodels.items()
+            },
         }
 
     def calibrate_result(self, result: Any, context_snapshot: Optional[Dict[str, Any]] = None) -> Any:
@@ -332,6 +348,7 @@ class AnalysisCalibrationService:
             score=int(getattr(result, "sentiment_score", 50) or 50),
             trend_prediction=str(getattr(result, "trend_prediction", "") or "").strip(),
             context_snapshot=context_snapshot,
+            strategy_id=getattr(result, "strategy_id", None),
         )
         result.calibration_info = profile.to_dict()
 
@@ -418,6 +435,7 @@ class AnalysisCalibrationService:
         score: int,
         trend_prediction: str,
         context_snapshot: Optional[Dict[str, Any]] = None,
+        strategy_id: Optional[str] = None,
     ) -> CalibrationProfile:
         market = get_market_for_stock(stock_code) or "cn"
         profile = CalibrationProfile(
@@ -430,16 +448,31 @@ class AnalysisCalibrationService:
         if not stock_code or current_signal not in {"buy", "hold", "sell"}:
             return profile
 
-        rows = self._load_learning_rows()
-        if rows:
-            profile = self._build_heuristic_profile(
+        # Strategy scope: use pre-computed strategy-level backtest summary as
+        # the highest-priority calibration source when a strategy_id is known.
+        # When available, strategy profile replaces heuristic as the base;
+        # ML model merge + conflict resolution still applies below.
+        if strategy_id:
+            strategy_profile = self._build_strategy_profile(
                 stock_code=stock_code,
+                strategy_id=strategy_id,
                 current_signal=current_signal,
-                model_used=model_used,
-                score=score,
                 market=market,
-                rows=rows,
             )
+            if strategy_profile is not None and strategy_profile.applied:
+                profile = strategy_profile
+
+        if not profile.applied:
+            rows = self._load_learning_rows()
+            if rows:
+                profile = self._build_heuristic_profile(
+                    stock_code=stock_code,
+                    current_signal=current_signal,
+                    model_used=model_used,
+                    score=score,
+                    market=market,
+                    rows=rows,
+                )
 
         model_decision = self._build_model_profile(
             stock_code=stock_code,
@@ -747,6 +780,9 @@ class AnalysisCalibrationService:
         realtime = enhanced.get("realtime") or enhanced.get("realtime_quote") or {}
         trend = enhanced.get("trend_analysis") or enhanced.get("trend_result") or {}
         chip = enhanced.get("chip") or enhanced.get("chip_distribution") or {}
+        today = enhanced.get("today") if isinstance(enhanced.get("today"), dict) else {}
+        yesterday = enhanced.get("yesterday") if isinstance(enhanced.get("yesterday"), dict) else {}
+        ma_status = enhanced.get("ma_status") if isinstance(enhanced.get("ma_status"), dict) else {}
 
         market = str(
             market_context.get("market")
@@ -766,10 +802,32 @@ class AnalysisCalibrationService:
 
         change_pct = realtime.get("change_pct")
         if change_pct is None:
-            change_pct = enhanced.get("price_change_ratio")
+            change_pct = today.get("pct_chg") or enhanced.get("price_change_ratio")
         volume_ratio = realtime.get("volume_ratio")
         if volume_ratio is None:
             volume_ratio = enhanced.get("volume_change_ratio", 1.0)
+
+        price = self._to_float(realtime.get("price") or today.get("close"))
+        open_price = self._to_float(today.get("open"))
+        high_price = self._to_float(today.get("high"))
+        low_price = self._to_float(today.get("low"))
+        prev_close = self._to_float(yesterday.get("close"))
+        ma5 = self._to_float(today.get("ma5"))
+        ma10 = self._to_float(today.get("ma10"))
+        ma20 = self._to_float(today.get("ma20"))
+        avg_cost = self._to_float(chip.get("avg_cost"))
+        signal_reasons = trend.get("signal_reasons") if isinstance(trend.get("signal_reasons"), list) else []
+        risk_factors = trend.get("risk_factors") if isinstance(trend.get("risk_factors"), list) else []
+        volume_status = str(trend.get("volume_status") or "").lower()
+        buy_signal = str(trend.get("buy_signal") or "").lower()
+        trend_status = str(trend.get("trend_status") or "").lower()
+
+        intraday_range_pct = ((high_price - low_price) / price * 100.0) if price > 0 and high_price > low_price else 0.0
+        open_gap_pct = ((open_price - prev_close) / prev_close * 100.0) if prev_close > 0 and open_price > 0 else 0.0
+        ma5_distance_pct = ((price - ma5) / ma5 * 100.0) if price > 0 and ma5 > 0 else 0.0
+        ma10_distance_pct = ((price - ma10) / ma10 * 100.0) if price > 0 and ma10 > 0 else 0.0
+        ma20_distance_pct = ((price - ma20) / ma20 * 100.0) if price > 0 and ma20 > 0 else 0.0
+        chip_cost_distance_pct = ((price - avg_cost) / avg_cost * 100.0) if price > 0 and avg_cost > 0 else 0.0
 
         features = {
             "score_norm": self._clip(self._to_float(score) / 100.0, 0.0, 1.0),
@@ -777,6 +835,12 @@ class AnalysisCalibrationService:
             "trend_bull": 1.0 if trend_bucket == "bull" else 0.0,
             "trend_neutral": 1.0 if trend_bucket == "neutral" else 0.0,
             "trend_bear": 1.0 if trend_bucket == "bear" else 0.0,
+            "trend_status_up": 1.0 if any(token in trend_status for token in ("up", "多", "上升")) else 0.0,
+            "trend_status_down": 1.0 if any(token in trend_status for token in ("down", "空", "下降")) else 0.0,
+            "buy_signal_strong": 1.0 if any(token in buy_signal for token in ("strong", "强")) else 0.0,
+            "buy_signal_weak": 1.0 if any(token in buy_signal for token in ("weak", "弱")) else 0.0,
+            "volume_status_high": 1.0 if any(token in volume_status for token in ("high", "放量", "active")) else 0.0,
+            "volume_status_low": 1.0 if any(token in volume_status for token in ("low", "缩量", "quiet")) else 0.0,
             "market_cn": 1.0 if market == "cn" else 0.0,
             "market_hk": 1.0 if market == "hk" else 0.0,
             "market_us": 1.0 if market == "us" else 0.0,
@@ -787,14 +851,31 @@ class AnalysisCalibrationService:
             "change_pct_norm": self._clip(self._to_float(change_pct) / 10.0, -3.0, 3.0),
             "volume_ratio_norm": self._clip(self._to_float(volume_ratio, 1.0) / 3.0, 0.0, 3.0),
             "turnover_rate_norm": self._clip(self._to_float(realtime.get("turnover_rate")) / 30.0, 0.0, 3.0),
+            "pe_ratio_norm": self._clip(self._to_float(realtime.get("pe_ratio")) / 80.0, 0.0, 3.0),
+            "pb_ratio_norm": self._clip(self._to_float(realtime.get("pb_ratio")) / 10.0, 0.0, 3.0),
+            "market_cap_norm": self._clip(self._to_float(realtime.get("total_mv")) / 1000000000000.0, 0.0, 5.0),
+            "circ_market_cap_norm": self._clip(self._to_float(realtime.get("circ_mv")) / 1000000000000.0, 0.0, 5.0),
+            "change_60d_norm": self._clip(self._to_float(realtime.get("change_60d")) / 30.0, -3.0, 3.0),
+            "intraday_range_norm": self._clip(intraday_range_pct / 10.0, 0.0, 3.0),
+            "open_gap_norm": self._clip(open_gap_pct / 10.0, -3.0, 3.0),
+            "ma5_distance_norm": self._clip(ma5_distance_pct / 10.0, -3.0, 3.0),
+            "ma10_distance_norm": self._clip(ma10_distance_pct / 10.0, -3.0, 3.0),
+            "ma20_distance_norm": self._clip(ma20_distance_pct / 10.0, -3.0, 3.0),
+            "ma_bullish_alignment": 1.0 if ma_status.get("bullish_alignment") else 0.0,
+            "price_above_ma5": 1.0 if price > 0 and ma5 > 0 and price >= ma5 else 0.0,
+            "price_above_ma20": 1.0 if price > 0 and ma20 > 0 and price >= ma20 else 0.0,
             "trend_strength_norm": self._clip(self._to_float(trend.get("trend_strength")) / 100.0, 0.0, 1.0),
             "technical_signal_score_norm": self._clip(self._to_float(trend.get("signal_score")) / 100.0, 0.0, 1.0),
             "bias_ma5_norm": self._clip(self._to_float(trend.get("bias_ma5")) / 10.0, -3.0, 3.0),
             "bias_ma10_norm": self._clip(self._to_float(trend.get("bias_ma10")) / 10.0, -3.0, 3.0),
+            "signal_reason_count_norm": self._clip(len(signal_reasons) / 6.0, 0.0, 3.0),
+            "risk_factor_count_norm": self._clip(len(risk_factors) / 6.0, 0.0, 3.0),
             "chip_profit_ratio_norm": self._clip(self._to_float(chip.get("profit_ratio")) / 100.0, 0.0, 1.0),
             "chip_concentration90_norm": self._clip(self._to_float(chip.get("concentration_90")) / 100.0, 0.0, 1.0),
             "chip_concentration70_norm": self._clip(self._to_float(chip.get("concentration_70")) / 100.0, 0.0, 1.0),
+            "chip_cost_distance_norm": self._clip(chip_cost_distance_pct / 20.0, -3.0, 3.0),
             "china_exposure_norm": self._china_exposure_score(china_exposure.get("level")),
+            "news_window_norm": self._clip(self._to_float(enhanced.get("news_window_days"), 3.0) / 7.0, 0.0, 2.0),
             "is_index_etf": 1.0 if enhanced.get("is_index_etf") else 0.0,
             "data_missing": 1.0 if enhanced.get("data_missing") else 0.0,
         }
@@ -883,6 +964,92 @@ class AnalysisCalibrationService:
             "applied": True,
             "reason": reason,
         }
+
+
+    def _build_strategy_profile(
+        self,
+        *,
+        stock_code: str,
+        strategy_id: str,
+        current_signal: str,
+        market: str,
+    ) -> Optional[CalibrationProfile]:
+        """Build a CalibrationProfile from pre-computed strategy-level backtest summary.
+
+        Uses ``BacktestService.get_strategy_summary()`` to fetch aggregated
+        strategy performance metrics (win_rate, direction_accuracy,
+        avg_return) and derives a signal adjustment decision from them.
+
+        Returns ``None`` when no strategy summary exists or the data is
+        insufficient — the caller falls back to heuristic/ML calibration.
+        """
+        try:
+            summary = BacktestService(self.db).get_strategy_summary(strategy_id)
+        except Exception:
+            return None
+
+        if summary is None:
+            return None
+
+        total_evals = int(summary.get("total_evaluations") or 0)
+        if total_evals < self.min_samples:
+            return None
+
+        win_rate = float(summary.get("win_rate") or 0.5)
+        direction_accuracy = float(summary.get("direction_accuracy") or 0.5)
+        avg_return = float(summary.get("avg_return") or 0.0)
+
+        # Strategy summary is aggregated (not per-signal), so we build
+        # synthetic SignalStats anchored around the current signal.
+        current_stats = SignalStats(
+            signal=current_signal,
+            samples=total_evals,
+            accuracy=direction_accuracy,
+            avg_return=avg_return,
+        )
+
+        applied = False
+        suggested_signal = current_signal
+        score_adjustment = 0
+        reason = ""
+
+        # Conservative strategy-level calibration rules
+        if direction_accuracy <= 0.30:
+            suggested_signal = "hold"
+            applied = True
+            score_adjustment = -10 if current_signal == "buy" else 10 if current_signal == "sell" else 0
+            reason = "该策略历史方向准确率偏低，降级为观望。"
+        elif direction_accuracy <= 0.45:
+            if current_signal in {"buy", "sell"}:
+                suggested_signal = "hold"
+                applied = True
+                score_adjustment = -6 if current_signal == "buy" else 6
+                reason = "该策略方向准确率较弱，先保守降级为观望。"
+        elif direction_accuracy >= 0.65 and win_rate >= 0.55:
+            applied = True
+            if current_signal == "buy":
+                score_adjustment = 5
+            elif current_signal == "sell":
+                score_adjustment = -5
+            reason = f"该策略历史方向准确率较高（{direction_accuracy:.0%}），适度强化当前结论。"
+
+        profile = CalibrationProfile(
+            enabled=self.enabled,
+            market=market,
+            model_used=None,
+            source_scope="策略",
+            samples=total_evals,
+            threshold=self.min_samples,
+            current_signal=current_signal,
+            current_signal_stats=current_stats,
+            best_alternative_stats=None,
+            suggested_signal=suggested_signal,
+            score_adjustment=score_adjustment,
+            applied=applied,
+            reason=reason,
+        )
+        return profile
+
 
     @staticmethod
     def _compute_signal_stats(rows: Iterable[Dict[str, Any]], signal: str) -> SignalStats:

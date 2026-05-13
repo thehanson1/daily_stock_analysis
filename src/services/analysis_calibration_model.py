@@ -4,9 +4,11 @@
 Default strategy:
 1. Prefer a tree-based classifier (HistGradientBoostingClassifier) when
    scikit-learn is available.
-2. Train a global model plus per-market submodels when enough samples exist.
-3. Fall back to the previous Gaussian Naive Bayes implementation only when the
-   tree backend is unavailable or the scoped sample set is too small.
+2. Support a conservative LogisticRegression backend as a stronger linear
+   baseline for small/medium datasets.
+3. Train a global model plus per-market submodels when enough samples exist.
+4. Fall back to the previous Gaussian Naive Bayes implementation only when the
+   sklearn backend is unavailable or the scoped sample set is too small.
 """
 
 from __future__ import annotations
@@ -26,15 +28,18 @@ logger = logging.getLogger(__name__)
 _MODEL_VERSION = 2
 _VARIANCE_FLOOR = 1e-4
 _TREE_BACKEND = "hist_gradient_boosting"
+_LOGISTIC_BACKEND = "logistic_regression"
 _NB_BACKEND = "naive_bayes"
 _DEFAULT_SCOPE = "global"
 
 try:
     from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.linear_model import LogisticRegression
 
     _SKLEARN_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only when sklearn missing
     HistGradientBoostingClassifier = None
+    LogisticRegression = None
     _SKLEARN_AVAILABLE = False
 
 
@@ -51,9 +56,11 @@ class SmallCalibrationPrediction:
     baseline_accuracy: Optional[float] = None
     engine: str = _NB_BACKEND
     scope: str = _DEFAULT_SCOPE
+    validation_metrics: Optional[Dict[str, Any]] = None
+
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "predicted_signal": self.predicted_signal,
             "confidence": self.confidence,
             "probabilities": dict(self.probabilities),
@@ -64,6 +71,9 @@ class SmallCalibrationPrediction:
             "engine": self.engine,
             "scope": self.scope,
         }
+        if self.validation_metrics is not None:
+            payload["validation_metrics"] = dict(self.validation_metrics)
+        return payload
 
 
 class SmallCalibrationModel:
@@ -104,6 +114,28 @@ class SmallCalibrationModel:
     def baseline_accuracy(self) -> Optional[float]:
         global_model = self.submodels.get(_DEFAULT_SCOPE) or {}
         return global_model.get("baseline_accuracy")
+
+    @property
+    def validation_metrics(self) -> Optional[Dict[str, Any]]:
+        global_model = self.submodels.get(_DEFAULT_SCOPE) or {}
+        metrics = global_model.get("validation_metrics")
+        return dict(metrics) if isinstance(metrics, dict) else None
+
+    @property
+    def label_distribution(self) -> Dict[str, Any]:
+        global_model = self.submodels.get(_DEFAULT_SCOPE) or {}
+        distribution = global_model.get("label_distribution") or {}
+        return dict(distribution) if isinstance(distribution, dict) else {}
+
+    @staticmethod
+    def backend_capabilities() -> Dict[str, Any]:
+        return {
+            "tree_backend": _TREE_BACKEND,
+            "logistic_backend": _LOGISTIC_BACKEND,
+            "naive_bayes_backend": _NB_BACKEND,
+            "sklearn_available": _SKLEARN_AVAILABLE,
+        }
+
 
     @classmethod
     def fit(
@@ -210,12 +242,25 @@ class SmallCalibrationModel:
             trained = cls._fit_tree_backend(train_samples, validation_samples, feature_names, labels)
             if trained is not None:
                 return trained
+            trained = cls._fit_logistic_backend(train_samples, validation_samples, feature_names, labels)
+            if trained is not None:
+                return trained
+        elif backend == _LOGISTIC_BACKEND:
+            trained = cls._fit_logistic_backend(train_samples, validation_samples, feature_names, labels)
+            if trained is not None:
+                return trained
 
         return cls._fit_nb_backend(train_samples, validation_samples, feature_names, labels)
 
     @staticmethod
     def _resolve_backend(*, preferred_backend: str, sample_count: int) -> str:
         normalized = str(preferred_backend or "tree").strip().lower()
+        if normalized in {"naive_bayes", "nb", _NB_BACKEND}:
+            return _NB_BACKEND
+        if normalized in {"logistic", "logistic_regression", "lr", _LOGISTIC_BACKEND}:
+            if _SKLEARN_AVAILABLE and LogisticRegression is not None and sample_count >= 12:
+                return _LOGISTIC_BACKEND
+            return _NB_BACKEND
         if normalized in {"tree", "auto", _TREE_BACKEND} and _SKLEARN_AVAILABLE and sample_count >= 12:
             return _TREE_BACKEND
         return _NB_BACKEND
@@ -263,12 +308,13 @@ class SmallCalibrationModel:
         )
         model.fit(X_train, y_train)
 
-        validation_accuracy = cls._evaluate_tree_model(
+        validation_metrics = cls._evaluate_tree_metrics(
             model,
             validation_samples,
             feature_names,
         )
-        baseline_accuracy = cls._compute_baseline_accuracy(train_samples)
+        validation_accuracy = validation_metrics.get("accuracy") if validation_metrics else None
+        baseline_accuracy = cls._compute_baseline_accuracy(validation_samples) if validation_samples else None
 
         payload = base64.b64encode(pickle.dumps(model, protocol=pickle.HIGHEST_PROTOCOL)).decode("ascii")
         return {
@@ -276,10 +322,62 @@ class SmallCalibrationModel:
             "sample_count": len(train_samples) + len(validation_samples),
             "validation_accuracy": validation_accuracy,
             "validation_count": len(validation_samples),
+            "validation_metrics": validation_metrics,
             "baseline_accuracy": baseline_accuracy,
+            "label_distribution": cls._compute_label_distribution(train_samples + validation_samples),
             "label_names": list(getattr(model, "classes_", label_names)),
             "artifact_b64": payload,
         }
+
+    @classmethod
+    def _fit_logistic_backend(
+        cls,
+        train_samples: Sequence[Dict[str, Any]],
+        validation_samples: Sequence[Dict[str, Any]],
+        feature_names: Sequence[str],
+        label_names: Sequence[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not _SKLEARN_AVAILABLE or LogisticRegression is None:
+            return None
+
+        X_train = [cls._vectorize_list(sample.get("features") or {}, feature_names) for sample in train_samples]
+        y_train = [str(sample.get("label") or "").strip().lower() for sample in train_samples]
+        if len({label for label in y_train if label}) < 2:
+            return None
+
+        model = LogisticRegression(
+            max_iter=600,
+            class_weight="balanced",
+            solver="lbfgs",
+            random_state=42,
+        )
+        try:
+            model.fit(X_train, y_train)
+        except Exception as exc:
+            logger.warning("[LearningLoop] 逻辑回归校准模型训练失败: %s", exc)
+            return None
+
+        validation_metrics = cls._evaluate_sklearn_metrics(
+            model,
+            validation_samples,
+            feature_names,
+        )
+        validation_accuracy = validation_metrics.get("accuracy") if validation_metrics else None
+        baseline_accuracy = cls._compute_baseline_accuracy(validation_samples) if validation_samples else None
+
+        payload = base64.b64encode(pickle.dumps(model, protocol=pickle.HIGHEST_PROTOCOL)).decode("ascii")
+        return {
+            "engine": _LOGISTIC_BACKEND,
+            "sample_count": len(train_samples) + len(validation_samples),
+            "validation_accuracy": validation_accuracy,
+            "validation_count": len(validation_samples),
+            "validation_metrics": validation_metrics,
+            "baseline_accuracy": baseline_accuracy,
+            "label_distribution": cls._compute_label_distribution(train_samples + validation_samples),
+            "label_names": list(getattr(model, "classes_", label_names)),
+            "artifact_b64": payload,
+        }
+
 
     @classmethod
     def _fit_nb_backend(
@@ -301,7 +399,7 @@ class SmallCalibrationModel:
                     "sample_count": len(train_samples) + len(validation_samples),
                     "validation_accuracy": None,
                     "validation_count": len(validation_samples),
-                    "baseline_accuracy": cls._compute_baseline_accuracy(train_samples),
+                    "baseline_accuracy": cls._compute_baseline_accuracy(validation_samples) if validation_samples else None,
                     "label_names": list(label_names),
                     "class_stats": class_stats,
                 }
@@ -309,13 +407,16 @@ class SmallCalibrationModel:
             sample_count=len(train_samples) + len(validation_samples),
             preferred_backend=_NB_BACKEND,
         )
-        validation_accuracy = temp_model._evaluate(validation_samples, scope=_DEFAULT_SCOPE)
+        validation_metrics = temp_model._evaluate_metrics(validation_samples, scope=_DEFAULT_SCOPE)
+        validation_accuracy = validation_metrics.get("accuracy") if validation_metrics else None
         return {
             "engine": _NB_BACKEND,
             "sample_count": len(train_samples) + len(validation_samples),
             "validation_accuracy": validation_accuracy,
             "validation_count": len(validation_samples),
-            "baseline_accuracy": cls._compute_baseline_accuracy(train_samples),
+            "validation_metrics": validation_metrics,
+            "baseline_accuracy": cls._compute_baseline_accuracy(validation_samples) if validation_samples else None,
+            "label_distribution": cls._compute_label_distribution(train_samples + validation_samples),
             "label_names": list(label_names),
             "class_stats": class_stats,
         }
@@ -370,45 +471,96 @@ class SmallCalibrationModel:
         return max(label_counts.values()) / max(sum(label_counts.values()), 1)
 
     @classmethod
-    def _evaluate_tree_model(
+    def _compute_label_distribution(cls, samples: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+        distribution: Dict[str, int] = {}
+        for sample in samples:
+            label = str(sample.get("label") or "").strip().lower()
+            if label:
+                distribution[label] = distribution.get(label, 0) + 1
+        return distribution
+
+    @classmethod
+    def _build_metrics(cls, actual: Sequence[str], predicted: Sequence[str]) -> Optional[Dict[str, Any]]:
+        total = min(len(actual), len(predicted))
+        if total <= 0:
+            return None
+
+        labels = sorted(set(actual) | set(predicted) | {"buy", "hold", "sell"})
+        confusion: Dict[str, Dict[str, int]] = {
+            label: {candidate: 0 for candidate in labels}
+            for label in labels
+        }
+        correct = 0
+        for expected, output in zip(actual, predicted):
+            confusion.setdefault(expected, {candidate: 0 for candidate in labels})
+            confusion[expected][output] = confusion[expected].get(output, 0) + 1
+            if expected == output:
+                correct += 1
+
+        per_label: Dict[str, Dict[str, Any]] = {}
+        for label in labels:
+            true_positive = confusion.get(label, {}).get(label, 0)
+            actual_count = sum(confusion.get(label, {}).values())
+            predicted_count = sum(row.get(label, 0) for row in confusion.values())
+            precision = true_positive / predicted_count if predicted_count else 0.0
+            recall = true_positive / actual_count if actual_count else 0.0
+            f1 = (2 * precision * recall / (precision + recall)) if precision + recall else 0.0
+            per_label[label] = {
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "support": actual_count,
+            }
+
+        return {
+            "accuracy": correct / total,
+            "count": total,
+            "confusion_matrix": confusion,
+            "per_label": per_label,
+        }
+
+    @classmethod
+    def _evaluate_sklearn_metrics(
         cls,
         model: Any,
         samples: Sequence[Dict[str, Any]],
         feature_names: Sequence[str],
-    ) -> Optional[float]:
-        if not samples:
-            return None
-        total = 0
-        correct = 0
+    ) -> Optional[Dict[str, Any]]:
+        actual: List[str] = []
+        predicted: List[str] = []
         for sample in samples:
             label = str(sample.get("label") or "").strip().lower()
             if not label:
                 continue
             vector = [cls._vectorize_list(sample.get("features") or {}, feature_names)]
-            prediction = model.predict(vector)[0]
-            total += 1
-            if prediction == label:
-                correct += 1
-        if total <= 0:
-            return None
-        return correct / total
+            actual.append(label)
+            predicted.append(str(model.predict(vector)[0]).strip().lower())
+        return cls._build_metrics(actual, predicted)
 
-    def _evaluate(self, samples: Sequence[Dict[str, Any]], *, scope: str = _DEFAULT_SCOPE) -> Optional[float]:
-        if not samples:
-            return None
-        total = 0
-        correct = 0
+    @classmethod
+    def _evaluate_tree_metrics(
+        cls,
+        model: Any,
+        samples: Sequence[Dict[str, Any]],
+        feature_names: Sequence[str],
+    ) -> Optional[Dict[str, Any]]:
+        return cls._evaluate_sklearn_metrics(model, samples, feature_names)
+
+    def _evaluate_metrics(self, samples: Sequence[Dict[str, Any]], *, scope: str = _DEFAULT_SCOPE) -> Optional[Dict[str, Any]]:
+        actual: List[str] = []
+        predicted: List[str] = []
         for sample in samples:
             label = str(sample.get("label") or "").strip().lower()
             prediction = self.predict(sample.get("features") or {}, scope_hint=scope)
             if not label or prediction is None:
                 continue
-            total += 1
-            if prediction.predicted_signal == label:
-                correct += 1
-        if total <= 0:
-            return None
-        return correct / total
+            actual.append(label)
+            predicted.append(prediction.predicted_signal)
+        return self._build_metrics(actual, predicted)
+
+    def _evaluate(self, samples: Sequence[Dict[str, Any]], *, scope: str = _DEFAULT_SCOPE) -> Optional[float]:
+        metrics = self._evaluate_metrics(samples, scope=scope)
+        return metrics.get("accuracy") if metrics else None
 
     def _resolve_scopes(self, scope_hint: Optional[str]) -> List[str]:
         scopes: List[str] = []
@@ -449,8 +601,8 @@ class SmallCalibrationModel:
         if not label_names:
             return None
 
-        if engine == _TREE_BACKEND:
-            model = self._load_runtime_tree_model(scope, submodel)
+        if engine in {_TREE_BACKEND, _LOGISTIC_BACKEND}:
+            model = self._load_runtime_sklearn_model(scope, submodel)
             if model is None:
                 return None
             vector = [self._vectorize_list(features, self.feature_names)]
@@ -479,9 +631,10 @@ class SmallCalibrationModel:
             baseline_accuracy=submodel.get("baseline_accuracy"),
             engine=engine,
             scope=scope,
+            validation_metrics=submodel.get("validation_metrics"),
         )
 
-    def _load_runtime_tree_model(self, scope: str, submodel: Dict[str, Any]) -> Optional[Any]:
+    def _load_runtime_sklearn_model(self, scope: str, submodel: Dict[str, Any]) -> Optional[Any]:
         if scope in self._runtime_cache:
             return self._runtime_cache[scope]
 
@@ -491,7 +644,7 @@ class SmallCalibrationModel:
         try:
             model = pickle.loads(base64.b64decode(artifact_b64.encode("ascii")))
         except Exception as exc:  # pragma: no cover - corrupt artifact
-            logger.warning("[LearningLoop] 加载树模型 artifact 失败(scope=%s): %s", scope, exc)
+            logger.warning("[LearningLoop] 加载 sklearn 校准模型 artifact 失败(scope=%s): %s", scope, exc)
             return None
         self._runtime_cache[scope] = model
         return model

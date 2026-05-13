@@ -244,6 +244,9 @@ class AnalysisHistory(Base):
     stop_loss = Column(Float)
     take_profit = Column(Float)
 
+    # 策略关联（用于策略级回测与校准）
+    strategy_id = Column(String(64), index=True)
+
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -265,6 +268,7 @@ class AnalysisHistory(Base):
             'raw_result': self.raw_result,
             'news_content': self.news_content,
             'context_snapshot': self.context_snapshot,
+            'strategy_id': self.strategy_id,
             'ideal_buy': self.ideal_buy,
             'secondary_buy': self.secondary_buy,
             'stop_loss': self.stop_loss,
@@ -302,6 +306,9 @@ class BacktestResult(Base):
     # 建议快照（避免未来分析字段变化导致回测不可解释）
     operation_advice = Column(String(20))
     position_recommendation = Column(String(8))  # long/cash
+
+    # 策略关联（从 AnalysisHistory 冗余，便于 strategy 维度聚合）
+    strategy_id = Column(String(64), index=True)
 
     # 价格与收益
     start_price = Column(Float)
@@ -348,8 +355,8 @@ class BacktestSummary(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    scope = Column(String(16), nullable=False, index=True)  # overall/stock
-    code = Column(String(16), index=True)
+    scope = Column(String(16), nullable=False, index=True)  # overall/stock/strategy
+    code = Column(String(64), index=True)
 
     eval_window_days = Column(Integer, nullable=False, default=10)
     engine_version = Column(String(16), nullable=False, default='v1')
@@ -1133,7 +1140,8 @@ class DatabaseManager:
         report_type: str,
         news_content: Optional[str],
         context_snapshot: Optional[Dict[str, Any]] = None,
-        save_snapshot: bool = True
+        save_snapshot: bool = True,
+        strategy_id: Optional[str] = None,
     ) -> int:
         """
         保存分析结果历史记录
@@ -1152,6 +1160,7 @@ class DatabaseManager:
             code=result.code,
             name=result.name,
             report_type=report_type,
+            strategy_id=strategy_id,
             sentiment_score=result.sentiment_score,
             operation_advice=result.operation_advice,
             trend_prediction=result.trend_prediction,
