@@ -28,6 +28,12 @@ class AnalysisCalibrationServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
         self._db_path = os.path.join(self._temp_dir.name, "learning_loop.db")
+        self._old_env = {
+            key: os.environ.get(key)
+            for key in ("ENV_FILE", "DATABASE_URL", "DATABASE_PATH")
+        }
+        os.environ["ENV_FILE"] = os.path.join(self._temp_dir.name, "empty.env")
+        os.environ.pop("DATABASE_URL", None)
         os.environ["DATABASE_PATH"] = self._db_path
 
         from src.config import Config
@@ -55,6 +61,14 @@ class AnalysisCalibrationServiceTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         DatabaseManager.reset_instance()
+        from src.config import Config
+
+        Config._instance = None
+        for key, value in self._old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self._temp_dir.cleanup()
 
     def _insert_learning_record(

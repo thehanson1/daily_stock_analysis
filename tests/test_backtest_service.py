@@ -21,6 +21,13 @@ class BacktestServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
         self._db_path = os.path.join(self._temp_dir.name, "test_backtest_service.db")
+        self._old_env = {
+            key: os.environ.get(key)
+            for key in ("ENV_FILE", "DATABASE_URL", "DATABASE_PATH", "BACKTEST_ENTRY_MODE")
+        }
+        os.environ["ENV_FILE"] = os.path.join(self._temp_dir.name, "empty.env")
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("BACKTEST_ENTRY_MODE", None)
         os.environ["DATABASE_PATH"] = self._db_path
         os.environ["BACKTEST_EVAL_WINDOW_DAYS"] = "3"
 
@@ -74,6 +81,12 @@ class BacktestServiceTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         DatabaseManager.reset_instance()
+        Config._instance = None
+        for key, value in self._old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self._temp_dir.cleanup()
 
     def _count_results(self) -> int:
@@ -97,6 +110,23 @@ class BacktestServiceTestCase(unittest.TestCase):
         self.assertEqual(stats3["saved"], 1)
         self.assertEqual(self._count_results(), 1)
 
+    def test_entry_mode_changes_backtest_identity(self) -> None:
+        service = BacktestService(self.db)
+        stats1 = service.run_backtest(code="600519", force=False, eval_window_days=3, min_age_days=0, limit=10)
+        self.assertEqual(stats1["saved"], 1)
+
+        os.environ["BACKTEST_ENTRY_MODE"] = "analysis_close"
+        Config._instance = None
+        stats2 = service.run_backtest(code="600519", force=False, eval_window_days=3, min_age_days=0, limit=10)
+
+        self.assertEqual(stats2["saved"], 1)
+        with self.db.get_session() as session:
+            versions = {
+                row.engine_version
+                for row in session.query(BacktestResult).order_by(BacktestResult.engine_version).all()
+            }
+        self.assertEqual(versions, {"v1@ac", "v1@no"})
+
     def _run_and_get_result(self) -> BacktestResult:
         """Helper: run backtest and return the single BacktestResult row."""
         service = BacktestService(self.db)
@@ -109,6 +139,7 @@ class BacktestServiceTestCase(unittest.TestCase):
         result = self._run_and_get_result()
 
         self.assertEqual(result.eval_status, "completed")
+        self.assertEqual(result.engine_version, "v1@no")
         self.assertEqual(result.code, "600519")
         self.assertEqual(result.analysis_date, date(2024, 1, 1))
         self.assertEqual(result.operation_advice, "买入")

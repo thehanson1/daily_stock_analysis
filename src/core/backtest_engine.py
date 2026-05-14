@@ -426,8 +426,13 @@ class BacktestEngine:
             return None
         first_bar = window_bars[0]
         if entry_mode == "next_close":
-            return float(first_bar.close) if first_bar.close and first_bar.close > 0 else None
-        return float(first_bar.open) if first_bar.open and first_bar.open > 0 else None
+            next_close = getattr(first_bar, "close", None)
+            return float(next_close) if next_close and next_close > 0 else None
+        next_open = getattr(first_bar, "open", None)
+        if next_open and next_open > 0:
+            return float(next_open)
+        next_close = getattr(first_bar, "close", None)
+        return float(next_close) if next_close and next_close > 0 else None
 
     @staticmethod
     def _sanitize_long_targets(
