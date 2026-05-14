@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] Pipeline Agent 5 个 K 线工具（get_daily_history / analyze_trend / calculate_ma / get_volume_analysis / analyze_pattern）改为 DB-first 加载，消除同一只股票 9x5=45 次重复 HTTP 请求 (Fixes upstream #1066)
 - [修复] Pipeline Agent 执行前按需预热 240 天 K 线历史到 DB，正常情况下 K 线工具调用无需重复网络请求
 - [修复] 冻结 target_date 通过 ContextVar 透传到 Pipeline Agent K 线工具线程，消除跨收盘边界时间漂移
+- [改进] GitHub Actions `daily_analysis.yml` 改为按美东 09:30-10:00 开盘窗口触发：工作流同时监听夏令时/冬令时两个 UTC cron，并在运行时用 `America/New_York` 本地时间判定，避免北京时间 21:30/22:30 切换时漏跑或重复跑。
 - [新功能] 支持通过 `DATABASE_URL` 环境变量直连外部云端数据库（如 Supabase PostgreSQL），解决本地与 GitHub Actions 之间的数据同步与持久化问题；未配置时自动回退至本地 SQLite。
 - [改进] Twelve Data 实时行情接入从 `price` 升级为 `quote`，美股/港股在免开户链路下可直接返回价格、涨跌幅、成交量、开高低昨收，并基于 Twelve Data 官方 `time_series` / `statistics` 接口补算量比与换手率（计划不支持时优雅降级为 `None`）。
 - [修复] 持仓管理页的持仓明细改为区分“本币现价/市值/未实现盈亏”和“基准币折算金额”，修复跨币种账户将本币现价与基准币市值混在同一口径下展示导致的误判；当缺少日线收盘价时，组合快照会优先尝试实时行情补价，并在仍无行情时明确标记“缺行情”，不再把成本价伪装成现价。

@@ -1,9 +1,15 @@
 name: 每日股票分析
 
 on:
-  # 定时触发 - 每天北京时间 18:00 (UTC 10:00)
+  # 定时触发
+  # GitHub Actions cron 仅支持 UTC，无法自动切换夏令时。
+  # 这里同时监听美东 09:30 的两种 UTC 映射：
+  # - 夏令时：UTC 13:30 = 北京时间 21:30
+  # - 冬令时：UTC 14:30 = 北京时间 22:30
+  # 后续通过 America/New_York 本地时间窗口判断，只允许真实的 09:30-10:00 开盘窗口继续执行。
   schedule:
-    - cron: '0 10 * * 1-5'     # 周一到周五，UTC 10:00 = 北京时间 18:00
+    - cron: '30 13 * * 1-5'
+    - cron: '30 14 * * 1-5'
   
   # 手动触发
   workflow_dispatch:
@@ -35,28 +41,54 @@ jobs:
     timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '90') }}
     
     steps:
+      - name: 校验定时窗口（夏令时/冬令时）
+        id: schedule_gate
+        if: github.event_name == 'schedule'
+        run: |
+          ny_now="$(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')"
+          ny_hm="$(TZ='America/New_York' date '+%H:%M')"
+          ny_weekday="$(TZ='America/New_York' date '+%u')"
+
+          echo "🕘 New York local time: $ny_now"
+
+          should_run=false
+          if [[ "$ny_weekday" -ge 1 && "$ny_weekday" -le 5 && "$ny_hm" > "09:29" && "$ny_hm" < "10:01" ]]; then
+            should_run=true
+          fi
+
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          if [[ "$should_run" != "true" ]]; then
+            echo "ℹ️ 当前不在美东 09:30-10:00 开盘窗口内，跳过本次触发。"
+          fi
+
       - name: 随机延迟（避免固定时间访问）
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         run: sleep $((RANDOM % 60))  # 随机延迟0-60秒启动
       
       - name: 检出代码
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/checkout@v5
       
       - name: 设置 Python 环境
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
       
       - name: 安装依赖
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
       
       - name: 创建必要目录
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         run: |
           mkdir -p data logs reports
       
       - name: 执行股票分析
+        if: github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true'
         env:
           # ==========================================
           # AI 配置
@@ -301,7 +333,7 @@ jobs:
       
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true')
         with:
           name: analysis-reports-${{ github.run_number }}
           path: |
@@ -310,7 +342,7 @@ jobs:
           retention-days: 30
       
       - name: 显示运行结果
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.schedule_gate.outputs.should_run == 'true')
         run: |
           echo ""
           echo "=========================================="

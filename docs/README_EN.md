@@ -190,7 +190,7 @@ Go to `Actions` tab → Click `I understand my workflows, go ahead and enable th
 #### 5. Done!
 
 The system will:
-- Run automatically at scheduled time (default: 18:00 Beijing Time)
+- Run automatically during the New York 09:30-10:00 market-open window (usually 21:30 Beijing during DST and 22:30 during standard time)
 - Send analysis reports to all configured channels
 - Save reports locally
 

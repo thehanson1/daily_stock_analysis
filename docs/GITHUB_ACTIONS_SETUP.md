@@ -125,7 +125,9 @@ name: Daily Stock Analysis
 
 on:
   schedule:
-    - cron: '0 10 * * 1-5'  # 每个工作日 18:00 北京时间
+    # 同时覆盖美东 09:30 的夏令时 / 冬令时 UTC 映射
+    - cron: '30 13 * * 1-5'  # 夏令时：北京时间 21:30
+    - cron: '30 14 * * 1-5'  # 冬令时：北京时间 22:30
   workflow_dispatch:
 
 jobs:
@@ -167,7 +169,8 @@ name: Daily Stock Analysis
 
 on:
   schedule:
-    - cron: '0 10 * * 1-5'
+    - cron: '30 13 * * 1-5'
+    - cron: '30 14 * * 1-5'
   workflow_dispatch:
 
 jobs:

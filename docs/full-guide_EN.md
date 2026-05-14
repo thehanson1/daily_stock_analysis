@@ -139,7 +139,7 @@ To get started quickly, you need at minimum:
 
 ### 5. Done!
 
-Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
+Default schedule: automatically run during the **New York 09:30-10:00 market-open window**, usually **21:30 Beijing during DST** and **22:30 Beijing during standard time**.
 
 ---
 
@@ -368,11 +368,14 @@ Edit `.github/workflows/daily_analysis.yml`:
 
 ```yaml
 schedule:
-  # UTC time, Beijing time = UTC + 8
-  - cron: '0 10 * * 1-5'   # Monday to Friday 18:00 (Beijing Time)
+  # GitHub Actions only supports UTC. To follow the New York market open
+  # across DST changes, declare both UTC candidates and gate by
+  # America/New_York local time inside the workflow.
+  - cron: '30 13 * * 1-5'   # DST: 21:30 Beijing Time
+  - cron: '30 14 * * 1-5'   # Standard time: 22:30 Beijing Time
 ```
 
-Common time reference:
+Common fixed Beijing-time reference:
 
 | Beijing Time | UTC cron expression |
 |---------|----------------|
@@ -381,6 +384,12 @@ Common time reference:
 | 15:00 | `'0 7 * * 1-5'` |
 | 18:00 | `'0 10 * * 1-5'` |
 | 21:00 | `'0 13 * * 1-5'` |
+
+For an automatic US market open window that follows DST, use:
+
+| Target window | Cron configuration | Notes |
+|---------|----------------|------|
+| New York 09:30-10:00 | `'30 13 * * 1-5'` + `'30 14 * * 1-5'` | About 21:30 Beijing during DST and 22:30 Beijing during standard time; add workflow-side timezone gating to avoid duplicate runs |
 
 ### Local Scheduled Tasks
 
