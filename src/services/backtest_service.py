@@ -46,12 +46,19 @@ class BacktestService:
 
         engine_version = getattr(config, "backtest_engine_version", "v1")
         neutral_band_pct = float(getattr(config, "backtest_neutral_band_pct", 2.0))
+        entry_mode = BacktestEngine._normalize_entry_mode(
+            getattr(config, "backtest_entry_mode", "next_open")
+        )
+        effective_engine_version = self._effective_engine_version(
+            str(engine_version),
+            entry_mode,
+        )
 
         eval_config = EvaluationConfig(
             eval_window_days=int(eval_window_days),
             neutral_band_pct=neutral_band_pct,
-            engine_version=str(engine_version),
-            entry_mode=str(getattr(config, "backtest_entry_mode", "next_open") or "next_open"),
+            engine_version=effective_engine_version,
+            entry_mode=entry_mode,
         )
 
         candidates = self.repo.get_candidates(
@@ -59,7 +66,7 @@ class BacktestService:
             min_age_days=int(min_age_days),
             limit=int(limit),
             eval_window_days=int(eval_window_days),
-            engine_version=str(engine_version),
+            engine_version=effective_engine_version,
             force=force,
         )
 
@@ -84,7 +91,7 @@ class BacktestService:
                             analysis_history_id=analysis.id,
                             code=analysis.code,
                             eval_window_days=int(eval_window_days),
-                            engine_version=str(engine_version),
+                            engine_version=effective_engine_version,
                             eval_status="error",
                             evaluated_at=datetime.now(),
                             operation_advice=analysis.operation_advice,
@@ -106,7 +113,7 @@ class BacktestService:
                             code=analysis.code,
                             analysis_date=analysis_date,
                             eval_window_days=int(eval_window_days),
-                            engine_version=str(engine_version),
+                            engine_version=effective_engine_version,
                             eval_status="insufficient_data",
                             evaluated_at=datetime.now(),
                             operation_advice=analysis.operation_advice,
@@ -190,7 +197,7 @@ class BacktestService:
                         code=analysis.code,
                         analysis_date=self._resolve_analysis_date(analysis),
                         eval_window_days=int(eval_window_days),
-                        engine_version=str(engine_version),
+                        engine_version=effective_engine_version,
                         eval_status="error",
                         evaluated_at=datetime.now(),
                         operation_advice=analysis.operation_advice,
@@ -206,7 +213,7 @@ class BacktestService:
             self._recompute_summaries(
                 touched_codes=sorted(touched_codes),
                 eval_window_days=int(eval_window_days),
-                engine_version=str(engine_version),
+                engine_version=effective_engine_version,
             )
 
         return {
@@ -225,7 +232,13 @@ class BacktestService:
 
     def get_summary(self, *, scope: str, code: Optional[str], eval_window_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
         config = get_config()
-        engine_version = str(getattr(config, "backtest_engine_version", "v1"))
+        entry_mode = BacktestEngine._normalize_entry_mode(
+            getattr(config, "backtest_entry_mode", "next_open")
+        )
+        engine_version = self._effective_engine_version(
+            str(getattr(config, "backtest_engine_version", "v1")),
+            entry_mode,
+        )
         lookup_code = OVERALL_SENTINEL_CODE if scope == "overall" else code
         summary = self.repo.get_summary(
             scope=scope,
@@ -281,6 +294,18 @@ class BacktestService:
             return analysis.created_at.date()
         logger.warning(f"无法确定分析日期，跳过记录: {analysis.code}#{getattr(analysis, 'id', '?')}")
         return None
+
+    @staticmethod
+    def _effective_engine_version(engine_version: str, entry_mode: str) -> str:
+        suffix_map = {
+            "analysis_close": "ac",
+            "next_open": "no",
+            "next_close": "nc",
+        }
+        base = str(engine_version or "v1").strip() or "v1"
+        if "@" in base:
+            return base
+        return f"{base}@{suffix_map.get(entry_mode, 'no')}"
 
     def _try_fill_daily_data(self, *, code: str, analysis_date: date, eval_window_days: int) -> None:
         try:
