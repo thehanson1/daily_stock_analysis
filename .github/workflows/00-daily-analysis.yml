@@ -36,6 +36,9 @@ jobs:
     environment: STOCK_LIST
     # 添加超时限制，防止任务卡死
     timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '30') }}
+      # <--- 新增下面这一行（缩进与 runs-on 对齐）---
+    if: github.event_name != 'schedule' || vars.SCHEDULE_ENABLED == 'true'
+    # <--- 新增结束 --->
     
     steps:
       - name: 随机延迟（避免固定时间访问）
